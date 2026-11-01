@@ -1,3 +1,14 @@
+"""
+Configuración del Panel Administrativo Django (Django Admin).
+
+Este módulo define las interfaces de gestión para supervisores y prevencionistas:
+- `ReporteAdmin`: Vista con badges de color por prioridad/estado, miniaturas de fotos, acciones en lote e historial embebido.
+- `UsuarioAdmin`: Control de accesos de trabajadores mineros y avatares.
+- `LocalizacionAdmin`: Catálogo de sectores físicos en faena.
+- `ReporteHistorialAdmin`: Visor global e inmutable de eventos de auditoría.
+- `CodigoVerificacionAdmin`: Monitoreo y auditoría de códigos OTP generados por correo.
+"""
+
 from django.contrib import admin
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe

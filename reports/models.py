@@ -1,13 +1,33 @@
+"""
+Modelos de Datos Relacionales del Servidor Central (Report Seeker).
+
+Este módulo define la estructura de entidades para el control y gestión de incidencias
+en faenas mineras:
+- `Usuario`: Personal operativo y supervisores con credenciales de 5 dígitos y PIN.
+- `Localizacion`: Catálogo maestro de áreas y túneles en terreno.
+- `Reporte`: Registro de incidentes reportados (con fotografía, prioridad y estado).
+- `ReporteHistorial`: Bitácora inmutable de auditoría para trazabilidad de modificaciones.
+- `CodigoVerificacion`: Códigos OTP de 6 dígitos para recuperación segura de PIN vía correo.
+"""
+
 import uuid
 from django.db import models
 from django.core.validators import MinValueValidator, MaxValueValidator
-from django.contrib.auth.hashers import make_password, check_password
+from django.contrib.auth.hashers import check_password
+from django.utils import timezone
 
 
 class Usuario(models.Model):
     """
     Representa al personal operativo y supervisores de faena minera.
-    Especificación: BACKEND_SPEC.md § 3.1
+    
+    Características clave:
+    - `usuario_id`: Clave primaria numérica de 5 dígitos (entre 10000 y 99999).
+    - `pin`: PIN numérico de 4 dígitos. Se almacena en texto plano en la base central
+      para permitir la sincronización offline hacia las bases SQLite locales de los
+      dispositivos móviles en faena sin conectividad.
+    
+    Especificación de arquitectura: BACKEND_SPEC.md § 3.1
     """
     ESTADO_CHOICES = [
         ('activo', 'Activo'),
@@ -34,7 +54,7 @@ class Usuario(models.Model):
     )
     pin = models.CharField(
         max_length=128,
-        help_text="PIN de 4 dígitos (hasheado con PBKDF2/Argon2 o texto plano para compatibilidad)",
+        help_text="PIN de 4 dígitos (almacenado para sincronización offline con SQLite móvil)",
         verbose_name="PIN de acceso"
     )
     habilitar_sumario = models.BooleanField(
@@ -59,15 +79,25 @@ class Usuario(models.Model):
             models.Index(fields=['updated_at']),
         ]
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.usuario_id} - {self.nombre} ({self.cargo})"
 
-    def set_pin(self, raw_pin: str):
-        """Guarda el PIN de 4 dígitos en texto plano para compatibilidad con la app móvil offline."""
+    def set_pin(self, raw_pin: str) -> None:
+        """
+        Establece el PIN del usuario.
+        
+        Guarda el valor limpio en texto plano para garantizar compatibilidad con la
+        validación offline realizada por la app móvil en SQLite local.
+        """
         self.pin = str(raw_pin).strip()
 
     def check_pin(self, raw_pin: str) -> bool:
-        """Comprueba el PIN tanto si está en texto plano como hasheado."""
+        """
+        Comprueba la validez de un PIN ingresado contra el registro del usuario.
+        
+        Soporta tanto comparación directa (texto plano) como verificación de hashes
+        Django PBKDF2/Argon2 para compatibilidad total con cuentas heredadas.
+        """
         raw_pin_str = str(raw_pin).strip()
         if self.pin == raw_pin_str:
             return True
@@ -79,8 +109,9 @@ class Usuario(models.Model):
 
 class Localizacion(models.Model):
     """
-    Catálogo maestro de sectores y áreas físicas de la faena minera.
-    Especificación: BACKEND_SPEC.md § 3.2
+    Catálogo maestro de sectores físicos, frentes de trabajo y túneles en faena minera.
+    
+    Especificación de arquitectura: BACKEND_SPEC.md § 3.2
     """
     nombre = models.CharField(max_length=150, unique=True, verbose_name="Nombre del sector")
     activo = models.BooleanField(default=True, verbose_name="Activo")
@@ -96,14 +127,15 @@ class Localizacion(models.Model):
             models.Index(fields=['updated_at']),
         ]
 
-    def __str__(self):
+    def __str__(self) -> str:
         return str(self.nombre)
 
 
 class Reporte(models.Model):
     """
-    Núcleo del sistema. Almacena las incidencias reportadas.
-    Especificación: BACKEND_SPEC.md § 3.3
+    Entidad núcleo del sistema. Almacena las incidencias de seguridad reportadas en terreno.
+    
+    Especificación de arquitectura: BACKEND_SPEC.md § 3.3
     """
     PRIORIDAD_CHOICES = [
         ('Alta', 'Alta'),
@@ -199,14 +231,15 @@ class Reporte(models.Model):
             models.Index(fields=['updated_at']),
         ]
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"[{self.prioridad}] {self.titulo} ({self.uuid})"
 
 
 class ReporteHistorial(models.Model):
     """
-    Bitácora inmutable de cambios y modificaciones sobre los reportes.
-    Especificación: BACKEND_SPEC.md § 3.4
+    Bitácora inmutable de auditoría que registra cada cambio efectuado sobre un reporte.
+    
+    Especificación de arquitectura: BACKEND_SPEC.md § 3.4
     """
     uuid = models.UUIDField(
         default=uuid.uuid4,
@@ -257,14 +290,18 @@ class ReporteHistorial(models.Model):
             models.Index(fields=['reporte', 'fecha_cambio']),
         ]
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"Cambio en {self.campo_modificado} ({self.reporte.uuid})"
 
 
 class CodigoVerificacion(models.Model):
     """
-    Código OTP de 6 dígitos enviado por correo electrónico para recuperación de PIN.
-    Válido por un tiempo limitado (15 minutos) con protección ante fuerza bruta (máx. 5 intentos).
+    Código OTP de 6 dígitos generado para la recuperación segura de PIN de acceso por correo.
+    
+    Características de seguridad:
+    - Válido únicamente por un intervalo de tiempo acotado (15 minutos).
+    - Limitador anti-fuerza bruta (máximo 5 intentos erróneos antes de ser invalidado).
+    - Marca de un solo uso (`utilizado=True`) al consumirse exitosamente.
     """
     uuid = models.UUIDField(
         default=uuid.uuid4,
@@ -295,9 +332,14 @@ class CodigoVerificacion(models.Model):
         ]
 
     def es_valido(self) -> bool:
-        from django.utils import timezone
+        """
+        Determina si el código OTP está vigente y disponible para verificación:
+        - No haber sido consumido previamente.
+        - No haber sobrepasado su fecha y hora límite de expiración.
+        - No haber excedido el umbral máximo de 5 intentos erróneos.
+        """
         return not self.utilizado and timezone.now() <= self.expira_en and self.intentos < 5
 
-    def __str__(self):
+    def __str__(self) -> str:
         estado = "Utilizado" if self.utilizado else ("Válido" if self.es_valido() else "Expirado")
         return f"OTP {self.codigo} para #{self.usuario_id} ({estado})"
