@@ -63,15 +63,18 @@ class Usuario(models.Model):
         return f"{self.usuario_id} - {self.nombre} ({self.cargo})"
 
     def set_pin(self, raw_pin: str):
-        """Hashea el PIN con PBKDF2."""
-        self.pin = make_password(str(raw_pin))
+        """Guarda el PIN de 4 dígitos en texto plano para compatibilidad con la app móvil offline."""
+        self.pin = str(raw_pin).strip()
 
     def check_pin(self, raw_pin: str) -> bool:
         """Comprueba el PIN tanto si está en texto plano como hasheado."""
-        raw_pin_str = str(raw_pin)
+        raw_pin_str = str(raw_pin).strip()
         if self.pin == raw_pin_str:
             return True
-        return check_password(raw_pin_str, self.pin)
+        try:
+            return check_password(raw_pin_str, self.pin)
+        except Exception:
+            return False
 
 
 class Localizacion(models.Model):

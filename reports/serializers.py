@@ -1,4 +1,5 @@
 import base64
+import re
 import uuid
 from typing import Optional
 from django.core.files.base import ContentFile
@@ -197,3 +198,99 @@ class ReportePullSerializer(serializers.ModelSerializer):
 
     def get_usuario_id(self, obj: Reporte) -> Optional[int]:
         return obj.usuario_id if obj.usuario else None
+
+
+class VerifyWorkerSerializer(serializers.Serializer):
+    """
+    Valida si un trabajador existe y su correo coincide, antes de permitirle cambiar el PIN.
+    """
+    usuario_id = serializers.IntegerField(min_value=10000, max_value=99999)
+    correo = serializers.EmailField()
+
+    def validate(self, attrs):
+        usuario_id = attrs.get('usuario_id')
+        correo = attrs.get('correo', '').strip().lower()
+
+        try:
+            usuario = Usuario.objects.get(usuario_id=usuario_id, estado='activo')
+        except Usuario.DoesNotExist:
+            raise serializers.ValidationError({'usuario_id': 'No existe un usuario activo con esta credencial.'})
+
+        if usuario.correo.strip().lower() != correo:
+            raise serializers.ValidationError({'correo': 'El correo no coincide con el registrado en el sistema.'})
+
+        attrs['usuario'] = usuario
+        return attrs
+
+
+class PinRecoverySerializer(serializers.Serializer):
+    """
+    Permite a un trabajador restablecer su PIN de 4 dígitos.
+    Acepta 'nuevo_pin' o 'pin', y 'correo' es opcional para compatibilidad con la app móvil.
+    """
+    usuario_id = serializers.IntegerField(min_value=10000, max_value=99999)
+    correo = serializers.EmailField(required=False, allow_null=True, allow_blank=True)
+    nuevo_pin = serializers.CharField(max_length=4, min_length=4, required=False)
+    pin = serializers.CharField(max_length=4, min_length=4, required=False)
+
+    def validate(self, attrs):
+        usuario_id = attrs.get('usuario_id')
+        raw_nuevo_pin = (
+            attrs.get('nuevo_pin')
+            or attrs.get('pin')
+            or self.initial_data.get('nuevo_pin')
+            or self.initial_data.get('pin')
+        )
+
+        if raw_nuevo_pin is None:
+            raise serializers.ValidationError({'nuevo_pin': 'Debes proporcionar el nuevo PIN de 4 dígitos.'})
+
+        pin_str = str(raw_nuevo_pin).strip()
+        if not re.match(r'^\d{4}$', pin_str):
+            raise serializers.ValidationError({'nuevo_pin': 'El PIN debe componerse exactamente de 4 dígitos numéricos.'})
+
+        try:
+            usuario = Usuario.objects.get(usuario_id=usuario_id, estado='activo')
+        except Usuario.DoesNotExist:
+            raise serializers.ValidationError({'usuario_id': 'No existe un usuario activo con este ID.'})
+
+        correo = attrs.get('correo')
+        if correo:
+            correo_clean = str(correo).strip().lower()
+            if usuario.correo.strip().lower() != correo_clean:
+                raise serializers.ValidationError({'correo': 'El correo no corresponde al usuario indicado.'})
+
+        attrs['usuario'] = usuario
+        attrs['nuevo_pin'] = pin_str
+        return attrs
+
+
+class ChangeEmailSerializer(serializers.Serializer):
+    """
+    Permite a un usuario autenticado por PIN actualizar su correo corporativo.
+    """
+    usuario_id = serializers.IntegerField(min_value=10000, max_value=99999)
+    pin = serializers.CharField(max_length=128)
+    nuevo_correo = serializers.EmailField()
+
+    def validate_nuevo_correo(self, value):
+        correo = value.strip().lower()
+        usuario_id = self.initial_data.get('usuario_id')
+        if Usuario.objects.filter(correo__iexact=correo).exclude(usuario_id=usuario_id).exists():
+            raise serializers.ValidationError('Este correo corporativo ya se encuentra asignado a otro usuario.')
+        return correo
+
+    def validate(self, attrs):
+        usuario_id = attrs.get('usuario_id')
+        raw_pin = attrs.get('pin')
+
+        try:
+            usuario = Usuario.objects.get(usuario_id=usuario_id, estado='activo')
+        except Usuario.DoesNotExist:
+            raise serializers.ValidationError({'usuario_id': 'Credenciales no válidas.'})
+
+        if not usuario.check_pin(raw_pin):
+            raise serializers.ValidationError({'pin': 'El PIN actual ingresado es incorrecto.'})
+
+        attrs['usuario'] = usuario
+        return attrs

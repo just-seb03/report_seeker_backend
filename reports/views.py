@@ -1,7 +1,9 @@
 from django.contrib.auth.models import User
 from django.db import transaction
+from django.shortcuts import render
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
+from django.views.generic import View
 from rest_framework import status
 from rest_framework.authtoken.models import Token
 from rest_framework.permissions import AllowAny
@@ -14,6 +16,9 @@ from .serializers import (
     UsuarioPublicSerializer,
     ReportePullSerializer,
     SyncPushPayloadSerializer,
+    VerifyWorkerSerializer,
+    PinRecoverySerializer,
+    ChangeEmailSerializer,
 )
 
 
@@ -221,3 +226,100 @@ class SyncPullView(APIView):
             'catalogos': catalogos,
             'reportes': reportes_data,
         }, status=status.HTTP_200_OK)
+
+
+class VerifyWorkerView(APIView):
+    """
+    POST /api/v1/auth/verify-worker/
+    Valida si el ID y correo corresponden a un usuario activo.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = VerifyWorkerSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {'valido': False, 'errors': serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        usuario = serializer.validated_data['usuario']
+        return Response({
+            'valido': True,
+            'usuario_id': usuario.usuario_id,
+            'nombre': usuario.nombre,
+            'cargo': usuario.cargo,
+        }, status=status.HTTP_200_OK)
+
+
+class PinRecoveryView(APIView):
+    """
+    POST /api/v1/auth/pin-recovery/
+    Restablece el PIN del usuario activo.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = PinRecoverySerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        usuario = serializer.validated_data['usuario']
+        nuevo_pin = serializer.validated_data['nuevo_pin']
+
+        usuario.set_pin(nuevo_pin)
+        usuario.save(update_fields=['pin', 'updated_at'])
+
+        # Sincronizar contraseña de Django User (para autenticación DRF)
+        django_user, _ = User.objects.get_or_create(
+            username=str(usuario.usuario_id),
+            defaults={'first_name': usuario.nombre, 'email': usuario.correo}
+        )
+        django_user.set_password(nuevo_pin)
+        django_user.save()
+
+        return Response({
+            'status': 'success',
+            'message': 'PIN actualizado con éxito. Ya puedes ingresar en la app con tu nueva clave.',
+            'usuario_id': usuario.usuario_id,
+            'pin': nuevo_pin,
+        }, status=status.HTTP_200_OK)
+
+
+class ChangeEmailView(APIView):
+    """
+    POST /api/v1/auth/change-email/
+    Actualiza el correo corporativo del usuario tras validar su PIN.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = ChangeEmailSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        usuario = serializer.validated_data['usuario']
+        nuevo_correo = serializer.validated_data['nuevo_correo']
+
+        usuario.correo = nuevo_correo
+        usuario.save(update_fields=['correo', 'updated_at'])
+
+        # Mantener sincronizado User de Django si existe
+        User.objects.filter(username=str(usuario.usuario_id)).update(email=nuevo_correo)
+
+        return Response({
+            'status': 'success',
+            'message': 'Correo corporativo actualizado exitosamente.',
+            'usuario_id': usuario.usuario_id,
+            'correo': nuevo_correo,
+        }, status=status.HTTP_200_OK)
+
+
+class AuthPortalWebView(View):
+    """
+    GET /auth/portal/
+    Renderiza la interfaz web de autoservicio para recuperación de PIN y cambio de correo.
+    """
+    def get(self, request):
+        return render(request, 'reports/auth_portal.html')
+

@@ -56,8 +56,8 @@ class ModelIntegrityTests(TestCase):
         with self.assertRaises(ValidationError):
             invalid_user_high.full_clean()
 
-    def test_usuario_pin_hashing(self):
-        """Verifica que set_pin hashee la clave y check_pin valide correctamente."""
+    def test_usuario_pin_storage_and_validation(self):
+        """Verifica que set_pin guarde el PIN en texto plano para compatibilidad offline y check_pin valide correctamente."""
         user = Usuario.objects.create(
             usuario_id=55555,
             nombre='Tester Hasher',
@@ -68,7 +68,7 @@ class ModelIntegrityTests(TestCase):
         user.set_pin('9876')
         user.save()
 
-        self.assertNotEqual(user.pin, '9876')
+        self.assertEqual(user.pin, '9876')
         self.assertTrue(user.check_pin('9876'))
         self.assertFalse(user.check_pin('0000'))
 
@@ -401,4 +401,165 @@ class Phase6SeedDataTests(TestCase):
         call_command('seed_data', stdout=out2)
         self.assertEqual(Localizacion.objects.count(), 4)
         self.assertEqual(Usuario.objects.count(), 3)
+
+
+class AuthPortalAndRecoveryTests(TestCase):
+    """
+    Pruebas unitarias para el Portal de Autoservicio y Endpoints de Autenticación
+    (INSTRUCTIONS_AUTH_PORTAL.md)
+    """
+    def setUp(self):
+        self.client = APIClient()
+        self.usuario = Usuario.objects.create(
+            usuario_id=10482,
+            nombre='Sebastián Arredondo',
+            correo='sebastian@minera.cl',
+            cargo='Prevencionista de Riesgos',
+            pin='1234',
+            habilitar_sumario=True,
+            estado='activo',
+        )
+        self.usuario_otro = Usuario.objects.create(
+            usuario_id=48291,
+            nombre='Carlos Mendoza',
+            correo='carlos.mendoza@minera.cl',
+            cargo='Supervisor de Turno',
+            pin='4321',
+            habilitar_sumario=False,
+            estado='activo',
+        )
+
+    def test_auth_portal_web_renders_ok(self):
+        """Verifica que el portal web /auth/portal/ renderice con 200 OK y su contenido HTML."""
+        response = self.client.get('/auth/portal/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertContains(response, 'Portal de Autoservicio')
+        self.assertContains(response, 'Recuperar PIN')
+        self.assertContains(response, 'Cambiar Correo')
+
+    def test_verify_worker_success(self):
+        """Verifica coincidencia exitosa de trabajador y correo corporativo."""
+        url = reverse('api_auth_verify_worker')
+        response = self.client.post(url, {
+            'usuario_id': 10482,
+            'correo': 'SEBASTIAN@minera.cl'  # Prueba case-insensitivity
+        }, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['valido'])
+        self.assertEqual(response.data['usuario_id'], 10482)
+        self.assertEqual(response.data['nombre'], 'Sebastián Arredondo')
+
+    def test_verify_worker_invalid_email(self):
+        """Falla si el correo no coincide con el registrado."""
+        url = reverse('api_auth_verify_worker')
+        response = self.client.post(url, {
+            'usuario_id': 10482,
+            'correo': 'otro@minera.cl'
+        }, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(response.data['valido'])
+
+    def test_pin_recovery_flow(self):
+        """Verifica el restablecimiento de PIN y posterior login con la nueva clave."""
+        url_recovery = reverse('api_auth_pin_recovery')
+        response = self.client.post(url_recovery, {
+            'usuario_id': 10482,
+            'correo': 'sebastian@minera.cl',
+            'nuevo_pin': '9999'
+        }, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['status'], 'success')
+
+        # Verificar que el PIN cambió en la BD
+        self.usuario.refresh_from_db()
+        self.assertTrue(self.usuario.check_pin('9999'))
+        self.assertFalse(self.usuario.check_pin('1234'))
+
+        # Probar login con el nuevo PIN
+        url_login = reverse('api_auth_login')
+        login_res = self.client.post(url_login, {'usuario_id': 10482, 'pin': '9999'}, format='json')
+        self.assertEqual(login_res.status_code, status.HTTP_200_OK)
+        self.assertIn('token', login_res.data)
+
+        # Login con PIN antiguo debe fallar
+        login_old = self.client.post(url_login, {'usuario_id': 10482, 'pin': '1234'}, format='json')
+        self.assertEqual(login_old.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_pin_recovery_without_correo_and_alias(self):
+        """Verifica cambio de PIN sin enviar correo (usando alias 'pin' o 'nuevo_pin')."""
+        url_recovery = reverse('api_auth_pin_recovery')
+
+        # Probar usando 'pin' como número entero y sin correo
+        res1 = self.client.post(url_recovery, {
+            'usuario_id': 10482,
+            'pin': 5555
+        }, format='json')
+        self.assertEqual(res1.status_code, status.HTTP_200_OK)
+        self.usuario.refresh_from_db()
+        self.assertEqual(self.usuario.pin, '5555')
+        self.assertTrue(self.usuario.check_pin('5555'))
+
+        # Probar usando 'nuevo_pin' sin correo
+        res2 = self.client.post(url_recovery, {
+            'usuario_id': 10482,
+            'nuevo_pin': '7777'
+        }, format='json')
+        self.assertEqual(res2.status_code, status.HTTP_200_OK)
+        self.usuario.refresh_from_db()
+        self.assertEqual(self.usuario.pin, '7777')
+
+    def test_pin_recovery_invalid_pin_format(self):
+        """Rechaza PINs que no tengan exactamente 4 dígitos numéricos."""
+        url = reverse('api_auth_pin_recovery')
+        # 3 dígitos
+        res1 = self.client.post(url, {'usuario_id': 10482, 'correo': 'sebastian@minera.cl', 'nuevo_pin': '123'}, format='json')
+        self.assertEqual(res1.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # 5 dígitos
+        res2 = self.client.post(url, {'usuario_id': 10482, 'correo': 'sebastian@minera.cl', 'nuevo_pin': '12345'}, format='json')
+        self.assertEqual(res2.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # Alfanumérico
+        res3 = self.client.post(url, {'usuario_id': 10482, 'correo': 'sebastian@minera.cl', 'nuevo_pin': 'abcd'}, format='json')
+        self.assertEqual(res3.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_change_email_success(self):
+        """Verifica actualización de correo corporativo validando el PIN actual."""
+        url = reverse('api_auth_change_email')
+        response = self.client.post(url, {
+            'usuario_id': 10482,
+            'pin': '1234',
+            'nuevo_correo': 's.arredondo@nuevodominio.cl'
+        }, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['status'], 'success')
+        self.usuario.refresh_from_db()
+        self.assertEqual(self.usuario.correo, 's.arredondo@nuevodominio.cl')
+
+    def test_change_email_invalid_pin(self):
+        """Falla si el PIN actual es incorrecto."""
+        url = reverse('api_auth_change_email')
+        response = self.client.post(url, {
+            'usuario_id': 10482,
+            'pin': '0000',
+            'nuevo_correo': 'nuevo@minera.cl'
+        }, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_change_email_duplicate_rejected(self):
+        """Rechaza si el nuevo correo ya pertenece a otro trabajador activo."""
+        url = reverse('api_auth_change_email')
+        response = self.client.post(url, {
+            'usuario_id': 10482,
+            'pin': '1234',
+            'nuevo_correo': 'carlos.mendoza@minera.cl'
+        }, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
 
