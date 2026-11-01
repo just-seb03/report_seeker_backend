@@ -13,7 +13,7 @@ DEFAULT_USUARIOS = [
     {
         'usuario_id': 10482,
         'nombre': 'Sebastián Arredondo',
-        'correo': 'sebastian@minera.cl',
+        'correo': 'seb.arredondo@proton.me',
         'cargo': 'Prevencionista de Riesgos',
         'foto_perfil': None,
         'pin': '1234',

@@ -294,3 +294,89 @@ class ChangeEmailSerializer(serializers.Serializer):
 
         attrs['usuario'] = usuario
         return attrs
+
+
+class RequestPinResetSerializer(serializers.Serializer):
+    """
+    Valida la credencial para solicitar el envío del código OTP de 6 dígitos al correo registrado.
+    No requiere ingresar el correo por seguridad; se envía automáticamente al correo corporativo del usuario.
+    """
+    usuario_id = serializers.IntegerField(min_value=10000, max_value=99999)
+    correo = serializers.EmailField(required=False, allow_null=True, allow_blank=True)
+
+    def validate(self, attrs):
+        usuario_id = attrs.get('usuario_id')
+
+        try:
+            usuario = Usuario.objects.get(usuario_id=usuario_id, estado='activo')
+        except Usuario.DoesNotExist:
+            raise serializers.ValidationError({'usuario_id': 'No existe un usuario activo con esta credencial.'})
+
+        attrs['usuario'] = usuario
+        return attrs
+
+
+class VerifyPinResetSerializer(serializers.Serializer):
+    """
+    Verifica el código OTP de 6 dígitos recibido por correo y establece el nuevo PIN de 4 dígitos.
+    """
+    usuario_id = serializers.IntegerField(min_value=10000, max_value=99999)
+    codigo = serializers.CharField(max_length=6, min_length=6)
+    nuevo_pin = serializers.CharField(max_length=4, min_length=4, required=False)
+    pin = serializers.CharField(max_length=4, min_length=4, required=False)
+
+    def validate(self, attrs):
+        usuario_id = attrs.get('usuario_id')
+        codigo = str(attrs.get('codigo', '')).strip()
+
+        raw_nuevo_pin = (
+            attrs.get('nuevo_pin')
+            or attrs.get('pin')
+            or self.initial_data.get('nuevo_pin')
+            or self.initial_data.get('pin')
+        )
+
+        if raw_nuevo_pin is None:
+            raise serializers.ValidationError({'nuevo_pin': 'Debes ingresar el nuevo PIN de 4 dígitos.'})
+
+        pin_str = str(raw_nuevo_pin).strip()
+        if not re.match(r'^\d{4}$', pin_str):
+            raise serializers.ValidationError({'nuevo_pin': 'El nuevo PIN debe componerse exactamente de 4 dígitos numéricos.'})
+
+        if not re.match(r'^\d{6}$', codigo):
+            raise serializers.ValidationError({'codigo': 'El código de verificación debe contener 6 dígitos numéricos.'})
+
+        try:
+            usuario = Usuario.objects.get(usuario_id=usuario_id, estado='activo')
+        except Usuario.DoesNotExist:
+            raise serializers.ValidationError({'usuario_id': 'No existe un usuario activo con este ID.'})
+
+        # Buscar el código OTP activo más reciente
+        from django.utils import timezone
+        otp = usuario.codigos_verificacion.filter(utilizado=False).order_by('-created_at').first()
+
+        if not otp:
+            raise serializers.ValidationError({'codigo': 'No hay ningún código de recuperación pendiente o ya fue utilizado.'})
+
+        if timezone.now() > otp.expira_en:
+            otp.utilizado = True
+            otp.save(update_fields=['utilizado'])
+            raise serializers.ValidationError({'codigo': 'El código de verificación ha expirado. Solicita uno nuevo.'})
+
+        if otp.intentos >= 5:
+            otp.utilizado = True
+            otp.save(update_fields=['utilizado'])
+            raise serializers.ValidationError({'codigo': 'Has superado el límite de intentos permitidos. Solicita un nuevo código.'})
+
+        if otp.codigo != codigo:
+            otp.intentos += 1
+            otp.save(update_fields=['intentos'])
+            restantes = 5 - otp.intentos
+            raise serializers.ValidationError({
+                'codigo': f'Código de verificación incorrecto. Intentos restantes: {restantes}.'
+            })
+
+        attrs['usuario'] = usuario
+        attrs['otp_obj'] = otp
+        attrs['nuevo_pin'] = pin_str
+        return attrs

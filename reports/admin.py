@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
-from .models import Usuario, Localizacion, Reporte, ReporteHistorial
+from .models import Usuario, Localizacion, Reporte, ReporteHistorial, CodigoVerificacion
 
 # Configuración de Branding del Panel Central de Faena
 admin.site.site_header = "Report Seeker — Servidor Central"
@@ -275,4 +275,43 @@ class ReporteHistorialAdmin(admin.ModelAdmin):
         return False
 
     def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(CodigoVerificacion)
+class CodigoVerificacionAdmin(admin.ModelAdmin):
+    """
+    Panel de auditoría de códigos OTP generados para recuperación de PIN por correo.
+    """
+    list_display = [
+        'codigo_destacado',
+        'usuario',
+        'correo',
+        'estado_badge',
+        'intentos',
+        'expira_en',
+        'created_at',
+    ]
+    list_filter = ['utilizado', ('created_at', admin.DateFieldListFilter)]
+    search_fields = ['codigo', 'usuario__usuario_id', 'usuario__nombre', 'correo']
+    readonly_fields = [f.name for f in CodigoVerificacion._meta.fields]
+    date_hierarchy = 'created_at'
+
+    def codigo_destacado(self, obj):
+        return format_html(
+            '<span style="font-family: monospace; font-size: 1.15em; font-weight: bold; letter-spacing: 2px; color: #3B82F6;">{}</span>',
+            obj.codigo
+        )
+    codigo_destacado.short_description = "Código OTP"
+
+    def estado_badge(self, obj):
+        if obj.utilizado:
+            return mark_safe('<span style="color: #64748B;">● Utilizado</span>')
+        elif obj.es_valido():
+            return mark_safe('<span style="color: #10B981; font-weight: bold;">● Válido</span>')
+        else:
+            return mark_safe('<span style="color: #EF4444;">● Expirado / Bloqueado</span>')
+    estado_badge.short_description = "Estado OTP"
+
+    def has_add_permission(self, request):
         return False

@@ -201,6 +201,15 @@
       text-align: center;
     }
 
+    .otp-input {
+      letter-spacing: 0.4em;
+      font-size: 1.35rem;
+      font-weight: 800;
+      text-align: center;
+      font-family: monospace;
+      color: var(--primary);
+    }
+
     .form-hint {
       font-size: 0.75rem;
       color: var(--text-muted);
@@ -330,10 +339,10 @@
 
         <!-- PESTAÑA 1: RECUPERAR PIN -->
         <section id="pane-pin" class="tab-pane active">
-          <!-- Paso 1: Validación de Credenciales -->
-          <form id="form-pin-step1" onsubmit="handleVerifyWorker(event)">
+          <!-- Paso 1: Solicitar Código OTP por Correo -->
+          <form id="form-pin-step1" onsubmit="handleRequestPinCode(event)">
             <p class="form-hint" style="margin-bottom: 1.25rem; font-size: 0.85rem;">
-              Ingresa tu ID de credencial (5 dígitos) y tu correo corporativo registrado para verificar tu identidad.
+              Ingresa tu ID de credencial (5 dígitos). Enviaremos automáticamente un código de seguridad de 6 dígitos a tu correo registrado.
             </p>
 
             <div class="form-group">
@@ -341,20 +350,22 @@
               <input type="text" id="pin-worker-id" class="form-input" placeholder="Ej. 10482" maxlength="5" pattern="\d{5}" required inputmode="numeric">
             </div>
 
-            <div class="form-group">
-              <label class="form-label" for="pin-email">Correo Corporativo</label>
-              <input type="email" id="pin-email" class="form-input" placeholder="ejemplo@minera.cl" required autocomplete="email">
-            </div>
-
             <button type="submit" id="btn-pin-verify" class="btn">
-              Verificar Identidad
+              📨 Enviar Código a mi Correo Registrado
             </button>
           </form>
 
-          <!-- Paso 2: Establecer Nuevo PIN (Inicialmente oculto) -->
-          <form id="form-pin-step2" style="display: none;" onsubmit="handleUpdatePin(event)">
+          <!-- Paso 2: Verificar Código OTP y Establecer Nuevo PIN (Inicialmente oculto) -->
+          <form id="form-pin-step2" style="display: none;" onsubmit="handleVerifyAndSetPin(event)">
             <div class="badge-info" id="verified-worker-badge">
-              ✓ Identidad confirmada para: <strong id="verified-worker-name">Trabajador</strong>
+              ✓ Código enviado a: <strong id="verified-worker-email">correo</strong><br>
+              <span style="font-size: 0.8rem; opacity: 0.85;">Revisa tu bandeja de entrada o spam (válido por 15 min).</span>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="otp-code">Código de Verificación (6 dígitos)</label>
+              <input type="text" id="otp-code" class="form-input otp-input" maxlength="6" pattern="\d{6}" placeholder="••••••" required inputmode="numeric" autocomplete="one-time-code">
+              <p class="form-hint">Ingresa el código numérico recibido en tu correo.</p>
             </div>
 
             <div class="form-group">
@@ -369,7 +380,7 @@
             </div>
 
             <button type="submit" id="btn-pin-submit" class="btn">
-              Guardar Nuevo PIN
+              🔒 Confirmar Código y Guardar PIN
             </button>
 
             <button type="button" class="btn btn-secondary" onclick="resetPinFlow()">
@@ -443,34 +454,35 @@
       hideAlert();
       document.getElementById('form-pin-step1').style.display = 'block';
       document.getElementById('form-pin-step2').style.display = 'none';
+      document.getElementById('otp-code').value = '';
       document.getElementById('new-pin').value = '';
       document.getElementById('confirm-pin').value = '';
     }
 
-    // Paso 1: Verificar Trabajador
-    async function handleVerifyWorker(event) {
+    // Paso 1: Solicitar Código OTP al Correo
+    async function handleRequestPinCode(event) {
       event.preventDefault();
       hideAlert();
       const workerId = document.getElementById('pin-worker-id').value.trim();
-      const email = document.getElementById('pin-email').value.trim();
       const btn = document.getElementById('btn-pin-verify');
 
       btn.disabled = true;
-      btn.innerText = 'Verificando...';
+      btn.innerText = 'Enviando código...';
 
       try {
-        const response = await fetch('/api/v1/auth/verify-worker/', {
+        const response = await fetch('/api/v1/auth/request-pin-reset/', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ usuario_id: parseInt(workerId, 10), correo: email })
+          body: JSON.stringify({ usuario_id: parseInt(workerId, 10) })
         });
 
         const data = await response.json();
-        if (response.ok && data.valido) {
-          activeWorker = { usuario_id: data.usuario_id, correo: email, nombre: data.nombre };
-          document.getElementById('verified-worker-name').innerText = data.nombre + ' (' + data.cargo + ')';
+        if (response.ok && data.status === 'success') {
+          activeWorker = { usuario_id: data.usuario_id };
+          document.getElementById('verified-worker-email').innerText = data.correo_enmascarado || 'tu correo registrado';
           document.getElementById('form-pin-step1').style.display = 'none';
           document.getElementById('form-pin-step2').style.display = 'block';
+          showAlert('Código de seguridad enviado a tu correo registrado. Ingrésalo a continuación.', 'success');
         } else {
           let errMsg = data.error || data.detail || data.message;
           if (!errMsg && data.errors) {
@@ -482,15 +494,15 @@
           showAlert(errMsg || 'Datos no válidos.', 'danger');
         }
       } catch (err) {
-        showAlert('No se pudo comunicar con el servidor. Revisa tu conexión a la red local.', 'danger');
+        showAlert('No se pudo comunicar con el servidor central. Revisa tu conexión a la red.', 'danger');
       } finally {
         btn.disabled = false;
-        btn.innerText = 'Verificar Identidad';
+        btn.innerText = '📨 Enviar Código a mi Correo Registrado';
       }
     }
 
-    // Paso 2: Actualizar PIN
-    async function handleUpdatePin(event) {
+    // Paso 2: Verificar Código OTP y Actualizar PIN
+    async function handleVerifyAndSetPin(event) {
       event.preventDefault();
       hideAlert();
 
@@ -500,11 +512,17 @@
         return;
       }
 
+      const otpCode = document.getElementById('otp-code').value.trim();
       const newPin = document.getElementById('new-pin').value.trim();
       const confirmPin = document.getElementById('confirm-pin').value.trim();
 
+      if (otpCode.length !== 6 || !/^\d{6}$/.test(otpCode)) {
+        showAlert('El código de verificación debe contener exactamente 6 números.', 'danger');
+        return;
+      }
+
       if (newPin.length !== 4 || !/^\d{4}$/.test(newPin)) {
-        showAlert('El PIN debe tener exactamente 4 números.', 'danger');
+        showAlert('El nuevo PIN debe tener exactamente 4 números.', 'danger');
         return;
       }
 
@@ -515,15 +533,15 @@
 
       const btn = document.getElementById('btn-pin-submit');
       btn.disabled = true;
-      btn.innerText = 'Guardando PIN...';
+      btn.innerText = 'Verificando y guardando...';
 
       try {
-        const response = await fetch('/api/v1/auth/pin-recovery/', {
+        const response = await fetch('/api/v1/auth/verify-pin-reset/', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             usuario_id: activeWorker.usuario_id,
-            correo: activeWorker.correo,
+            codigo: otpCode,
             nuevo_pin: newPin
           })
         });
@@ -542,13 +560,13 @@
           if (!errMsg && typeof data === 'object') {
             errMsg = Object.values(data).flat().join(' ');
           }
-          showAlert(errMsg || 'Error al actualizar PIN.', 'danger');
+          showAlert(errMsg || 'Error al verificar el código.', 'danger');
         }
       } catch (err) {
         showAlert('Error de red al actualizar el PIN.', 'danger');
       } finally {
         btn.disabled = false;
-        btn.innerText = 'Guardar Nuevo PIN';
+        btn.innerText = '🔒 Confirmar Código y Guardar PIN';
       }
     }
 

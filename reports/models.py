@@ -259,3 +259,45 @@ class ReporteHistorial(models.Model):
 
     def __str__(self):
         return f"Cambio en {self.campo_modificado} ({self.reporte.uuid})"
+
+
+class CodigoVerificacion(models.Model):
+    """
+    Código OTP de 6 dígitos enviado por correo electrónico para recuperación de PIN.
+    Válido por un tiempo limitado (15 minutos) con protección ante fuerza bruta (máx. 5 intentos).
+    """
+    uuid = models.UUIDField(
+        default=uuid.uuid4,
+        unique=True,
+        editable=False,
+        verbose_name="UUID Código"
+    )
+    usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.CASCADE,
+        related_name='codigos_verificacion',
+        verbose_name="Usuario"
+    )
+    correo = models.EmailField(verbose_name="Correo al que fue enviado")
+    codigo = models.CharField(max_length=6, verbose_name="Código de 6 dígitos")
+    expira_en = models.DateTimeField(verbose_name="Fecha y hora de expiración")
+    utilizado = models.BooleanField(default=False, verbose_name="¿Ya fue utilizado?")
+    intentos = models.PositiveSmallIntegerField(default=0, verbose_name="Intentos fallidos")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Fecha de creación")
+
+    class Meta:
+        verbose_name = "Código de Verificación"
+        verbose_name_plural = "Códigos de Verificación"
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['usuario', 'utilizado']),
+            models.Index(fields=['expira_en']),
+        ]
+
+    def es_valido(self) -> bool:
+        from django.utils import timezone
+        return not self.utilizado and timezone.now() <= self.expira_en and self.intentos < 5
+
+    def __str__(self):
+        estado = "Utilizado" if self.utilizado else ("Válido" if self.es_valido() else "Expirado")
+        return f"OTP {self.codigo} para #{self.usuario_id} ({estado})"

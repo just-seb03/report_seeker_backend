@@ -2,6 +2,7 @@ import uuid
 from datetime import timedelta
 from django.contrib.admin.sites import site as admin_site
 from django.contrib.auth.models import User
+from django.core import mail
 from django.core.exceptions import ValidationError
 from django.db.models import ProtectedError
 from django.db.utils import IntegrityError
@@ -10,7 +11,7 @@ from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APIClient
 from rest_framework import status
-from reports.models import Usuario, Localizacion, Reporte, ReporteHistorial
+from reports.models import Usuario, Localizacion, Reporte, ReporteHistorial, CodigoVerificacion
 from reports.serializers import Base64ImageField
 
 
@@ -561,5 +562,101 @@ class AuthPortalAndRecoveryTests(TestCase):
         }, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_request_pin_reset_otp_email_sent(self):
+        """Verifica generación de OTP y envío de correo para recuperación de PIN sin exigir correo manual."""
+        mail.outbox.clear()
+        url = reverse('api_auth_request_pin_reset')
+        # Solo se envía usuario_id por seguridad
+        response = self.client.post(url, {
+            'usuario_id': 10482,
+        }, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['status'], 'success')
+        self.assertIn('correo_enmascarado', response.data)
+
+        # Verificar que se envió un correo a la casilla registrada del usuario
+        self.assertEqual(len(mail.outbox), 1)
+        sent_mail = mail.outbox[0]
+        self.assertIn(self.usuario.correo, sent_mail.to)
+        self.assertIn('Report Seeker', sent_mail.subject)
+
+        # Verificar que el código existe en BD
+        otp = CodigoVerificacion.objects.filter(usuario=self.usuario, utilizado=False).first()
+        self.assertIsNotNone(otp)
+        self.assertEqual(len(otp.codigo), 6)
+        self.assertIn(otp.codigo, sent_mail.body)
+
+    def test_verify_pin_reset_otp_success(self):
+        """Verifica validación exitosa de código OTP y cambio de PIN."""
+        # 1. Generar código sin ingresar correo
+        url_req = reverse('api_auth_request_pin_reset')
+        self.client.post(url_req, {'usuario_id': 10482}, format='json')
+        otp = CodigoVerificacion.objects.filter(usuario=self.usuario, utilizado=False).first()
+
+        # 2. Verificar código y establecer nuevo PIN
+        url_verify = reverse('api_auth_verify_pin_reset')
+        res_verify = self.client.post(url_verify, {
+            'usuario_id': 10482,
+            'codigo': otp.codigo,
+            'nuevo_pin': '8888',
+        }, format='json')
+
+        self.assertEqual(res_verify.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_verify.data['status'], 'success')
+
+        # Verificar PIN actualizado en BD
+        self.usuario.refresh_from_db()
+        self.assertEqual(self.usuario.pin, '8888')
+        self.assertTrue(self.usuario.check_pin('8888'))
+
+        # Código debe estar marcado como utilizado
+        otp.refresh_from_db()
+        self.assertTrue(otp.utilizado)
+
+        # Probar login con el nuevo PIN
+        url_login = reverse('api_auth_login')
+        res_login = self.client.post(url_login, {'usuario_id': 10482, 'pin': '8888'}, format='json')
+        self.assertEqual(res_login.status_code, status.HTTP_200_OK)
+
+    def test_verify_pin_reset_otp_invalid_code(self):
+        """Verifica que un código incorrecto descuente intentos y sea rechazado."""
+        url_req = reverse('api_auth_request_pin_reset')
+        self.client.post(url_req, {'usuario_id': 10482}, format='json')
+        otp = CodigoVerificacion.objects.filter(usuario=self.usuario, utilizado=False).first()
+
+        url_verify = reverse('api_auth_verify_pin_reset')
+        res_verify = self.client.post(url_verify, {
+            'usuario_id': 10482,
+            'codigo': '000000',  # Código incorrecto
+            'nuevo_pin': '9999',
+        }, format='json')
+
+        self.assertEqual(res_verify.status_code, status.HTTP_400_BAD_REQUEST)
+        otp.refresh_from_db()
+        self.assertEqual(otp.intentos, 1)
+        self.assertFalse(otp.utilizado)
+
+    def test_verify_pin_reset_otp_expired_rejected(self):
+        """Verifica rechazo de código OTP expirado."""
+        otp = CodigoVerificacion.objects.create(
+            usuario=self.usuario,
+            correo='sebastian@minera.cl',
+            codigo='654321',
+            expira_en=timezone.now() - timedelta(minutes=1),  # Expirado
+            utilizado=False,
+        )
+
+        url_verify = reverse('api_auth_verify_pin_reset')
+        response = self.client.post(url_verify, {
+            'usuario_id': 10482,
+            'codigo': '654321',
+            'nuevo_pin': '9999',
+        }, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        otp.refresh_from_db()
+        self.assertTrue(otp.utilizado)
 
 
