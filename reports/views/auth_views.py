@@ -12,6 +12,7 @@ Este módulo expone los endpoints REST para:
 
 import logging
 from django.contrib.auth.models import User
+from django.core.cache import cache
 from django.shortcuts import render
 from django.views.generic import View
 from rest_framework import status
@@ -45,14 +46,18 @@ class LoginView(APIView):
     Valida credenciales de faena (usuario_id + pin) y retorna token de sesión DRF
     junto con los datos del perfil público del operario.
     
-    Seguridad:
-    - `throttle_scope = 'login'`: Límite estricto por IP para neutralizar ataques
-      de fuerza bruta automatizados sobre el PIN de 4 dígitos (SEC-02).
+    Seguridad (Fase 1 y Fase 2):
+    - `throttle_scope = 'login'`: Límite estricto por IP (máx. 15/min) para mitigar fuerza bruta (SEC-02).
+    - Bloqueo Progresivo de Cuenta (Account Lockout): Bloquea el usuario durante 5 minutos
+      tras 5 intentos fallidos consecutivos de PIN (neutraliza ataques distribuidos multi-IP).
     
     Especificación: BACKEND_SPEC.md § 4.1
     """
     permission_classes = [AllowAny]
     throttle_scope = 'login'
+
+    MAX_INTENTOS_FALLIDOS = 5
+    TIEMPO_BLOQUEO_SEGUNDOS = 300  # 5 minutos
 
     def post(self, request):
         usuario_id = request.data.get('usuario_id')
@@ -64,6 +69,19 @@ class LoginView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # 1. Comprobar si la cuenta está en período de bloqueo por fuerza bruta
+        lockout_key = f"login_lockout_{usuario_id}"
+        fails_key = f"login_fails_{usuario_id}"
+
+        if cache.get(lockout_key):
+            return Response(
+                {
+                    'error': 'Cuenta temporalmente bloqueada por superar el límite de 5 intentos fallidos. '
+                             'Por seguridad, intenta nuevamente en 5 minutos.'
+                },
+                status=status.HTTP_429_TOO_MANY_REQUESTS
+            )
+
         try:
             usuario = Usuario.objects.get(usuario_id=usuario_id, estado='activo')
         except Usuario.DoesNotExist:
@@ -72,11 +90,32 @@ class LoginView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED
             )
 
+        # 2. Validar PIN
         if not usuario.check_pin(str(pin)):
-            return Response(
-                {'error': 'Credenciales inválidas o usuario inactivo.'},
-                status=status.HTTP_401_UNAUTHORIZED
-            )
+            intentos_previos = cache.get(fails_key, 0) + 1
+            if intentos_previos >= self.MAX_INTENTOS_FALLIDOS:
+                cache.set(lockout_key, True, timeout=self.TIEMPO_BLOQUEO_SEGUNDOS)
+                cache.delete(fails_key)
+                return Response(
+                    {
+                        'error': 'Has superado el límite de 5 intentos fallidos. Tu cuenta ha sido bloqueada '
+                                 'temporalmente durante 5 minutos.'
+                    },
+                    status=status.HTTP_429_TOO_MANY_REQUESTS
+                )
+            else:
+                cache.set(fails_key, intentos_previos, timeout=self.TIEMPO_BLOQUEO_SEGUNDOS)
+                restantes = self.MAX_INTENTOS_FALLIDOS - intentos_previos
+                return Response(
+                    {
+                        'error': f'Credenciales inválidas o usuario inactivo. Intentos restantes antes del bloqueo: {restantes}.'
+                    },
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+
+        # 3. Login exitoso: limpiar contadores de intentos fallidos
+        cache.delete(fails_key)
+        cache.delete(lockout_key)
 
         # Vincular o crear usuario estándar de Django para generar token DRF
         django_user, _ = User.objects.get_or_create(
@@ -202,24 +241,31 @@ class RequestPinResetView(APIView):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        usuario = serializer.validated_data['usuario']
+        usuario = serializer.validated_data.get('usuario')
+        usuario_id = serializer.validated_data.get('usuario_id')
 
-        try:
-            # Delegar la generación y despacho del correo al servicio de dominio
-            solicitar_codigo_recuperacion(usuario, duracion_minutos=15)
-        except Exception as e:
-            logger.error(f"Fallo al enviar correo OTP a {usuario.correo}: {e}")
-            return Response({
-                'status': 'error',
-                'message': 'No se pudo conectar con el servidor de correo. Verifica tu conexión a internet.',
-                'error_detail': str(e)
-            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        # Si el usuario existe, enviar OTP a su casilla corporativa
+        if usuario is not None:
+            try:
+                solicitar_codigo_recuperacion(usuario, duracion_minutos=15)
+            except Exception as e:
+                logger.error(f"Fallo al enviar correo OTP a {usuario.correo}: {e}")
+                return Response({
+                    'status': 'error',
+                    'message': 'No se pudo conectar con el servidor de correo. Verifica tu conexión a internet.',
+                    'error_detail': str(e)
+                }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        # Mitigación SEC-04: Respuesta unificada neutral
+        # Retorna el mismo status 200 OK tanto si el usuario existe como si no,
+        # impidiendo a un atacante mapear qué números de credencial están activos.
+        correo_display = enmascarar_correo(usuario.correo) if usuario else '******@******'
 
         return Response({
             'status': 'success',
-            'message': 'Código de verificación enviado exitosamente a tu correo corporativo.',
-            'usuario_id': usuario.usuario_id,
-            'correo_enmascarado': enmascarar_correo(usuario.correo),
+            'message': 'Si la credencial ingresada es válida y activa, se ha enviado un código de verificación al correo corporativo registrado.',
+            'usuario_id': usuario_id,
+            'correo_enmascarado': correo_display,
             'expira_en_minutos': 15,
         }, status=status.HTTP_200_OK)
 

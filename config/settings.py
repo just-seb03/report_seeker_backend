@@ -69,8 +69,19 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-# CORS configuration for local mobile app connection
-CORS_ALLOW_ALL_ORIGINS = True
+# -----------------------------------------------------------------------------
+# Mitigación SEC-06: Restricción de Orígenes Cruzados (CORS Hardening)
+# Permite únicamente clientes locales, emuladores y dispositivos en la subred de faena (RFC 1918)
+# Bloquea sitios web maliciosos externos (ej. evil-site.com) de hacer peticiones cross-origin
+# -----------------------------------------------------------------------------
+CORS_ALLOW_ALL_ORIGINS = False
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^http://localhost(:[0-9]+)?$",
+    r"^http://127\.0\.0\.1(:[0-9]+)?$",
+    r"^http://10\.[0-9]+\.[0-9]+\.[0-9]+(:[0-9]+)?$",
+    r"^http://192\.168\.[0-9]+\.[0-9]+(:[0-9]+)?$",
+    r"^http://172\.(1[6-9]|2[0-9]|3[0-1])\.[0-9]+\.[0-9]+(:[0-9]+)?$",
+]
 CORS_ALLOW_CREDENTIALS = True
 
 # Default primary key field type

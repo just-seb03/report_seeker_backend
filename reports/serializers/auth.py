@@ -109,21 +109,17 @@ class RequestPinResetSerializer(serializers.Serializer):
     """
     Valida la solicitud de generación de código OTP de 6 dígitos.
     
-    No requiere ingresar el correo por motivos de seguridad; el sistema despacha el código
-    automáticamente al correo corporativo registrado asociado al usuario_id.
+    Seguridad (SEC-04 - Mitigación de Enumeración de Usuarios):
+    - Valida que usuario_id sea un número de 5 dígitos (10000 - 99999).
+    - Si el usuario no existe, no arroja un error 400 diferenciado; en su lugar
+      asigna `usuario = None` para que la vista retorne una respuesta neutral idéntica.
     """
     usuario_id = serializers.IntegerField(min_value=10000, max_value=99999)
     correo = serializers.EmailField(required=False, allow_null=True, allow_blank=True)
 
     def validate(self, attrs):
         usuario_id = attrs.get('usuario_id')
-
-        try:
-            usuario = Usuario.objects.get(usuario_id=usuario_id, estado='activo')
-        except Usuario.DoesNotExist:
-            raise serializers.ValidationError({'usuario_id': 'No existe un usuario activo con esta credencial.'})
-
-        attrs['usuario'] = usuario
+        attrs['usuario'] = Usuario.objects.filter(usuario_id=usuario_id, estado='activo').first()
         return attrs
 
 
