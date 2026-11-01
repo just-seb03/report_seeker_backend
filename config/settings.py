@@ -148,7 +148,7 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
-# Django REST Framework configuration
+# Django REST Framework configuration con Hardening y Rate Limiting
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.TokenAuthentication',
@@ -157,7 +157,33 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.AllowAny',
     ],
+    # Mitigación SEC-02 y SEC-04: Limitación de tasa (Rate Limiting / Throttling)
+    # Protege contra fuerza bruta de PIN (10,000 combinaciones) y saturación de correos
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.ScopedRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '120/minute',          # Tasa global para clientes anónimos
+        'login': '15/minute',          # Máximo 15 intentos de login por IP/minuto (anti fuerza bruta)
+        'otp_request': '5/minute',     # Máximo 5 solicitudes OTP por minuto (anti mail-bombing)
+        'sync_pull': '60/minute',      # Límite para descarga de catálogos
+        'sync_push': '60/minute',      # Límite para subida en lote
+    },
 }
+
+# -----------------------------------------------------------------------------
+# Cabeceras de Seguridad HTTP (Hardening de Navegador y Red)
+# -----------------------------------------------------------------------------
+# Evita que navegadores interpreten archivos con MIME types incorrectos (MIME sniffing)
+SECURE_CONTENT_TYPE_NOSNIFF = True
+
+# Protege contra Clickjacking bloqueando iframes externos
+X_FRAME_OPTIONS = 'DENY'
+
+# Protege cookies contra robo por scripts cliente (XSS)
+CSRF_COOKIE_HTTPONLY = True
+SESSION_COOKIE_HTTPONLY = True
 
 
 # Email Configuration

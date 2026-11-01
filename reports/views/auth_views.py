@@ -45,9 +45,14 @@ class LoginView(APIView):
     Valida credenciales de faena (usuario_id + pin) y retorna token de sesión DRF
     junto con los datos del perfil público del operario.
     
+    Seguridad:
+    - `throttle_scope = 'login'`: Límite estricto por IP para neutralizar ataques
+      de fuerza bruta automatizados sobre el PIN de 4 dígitos (SEC-02).
+    
     Especificación: BACKEND_SPEC.md § 4.1
     """
     permission_classes = [AllowAny]
+    throttle_scope = 'login'
 
     def post(self, request):
         usuario_id = request.data.get('usuario_id')
@@ -184,8 +189,13 @@ class RequestPinResetView(APIView):
     
     Genera un código OTP de 6 dígitos y lo envía al correo corporativo del trabajador
     para permitir la recuperación de su PIN de acceso de forma segura.
+    
+    Seguridad:
+    - `throttle_scope = 'otp_request'`: Previene saturación del servidor SMTP (Brevo)
+      y ataques de tipo Mail-Bombing mediante control de tasa de solicitudes (SEC-04).
     """
     permission_classes = [AllowAny]
+    throttle_scope = 'otp_request'
 
     def post(self, request):
         serializer = RequestPinResetSerializer(data=request.data)

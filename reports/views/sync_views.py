@@ -28,9 +28,15 @@ class SyncPushView(APIView):
     POST /api/v1/sync/push/
     
     Procesa en lote y de forma idempotente reportes y eventos de historial enviados por el móvil.
+    
+    Seguridad:
+    - `throttle_scope = 'sync_push'`: Limita la tasa de subidas masivas concurrentes
+      para evitar saturación de disco y memoria (SEC-03/SEC-05).
+    
     Especificación: BACKEND_SPEC.md § 4.2
     """
     permission_classes = [AllowAny]
+    throttle_scope = 'sync_push'
 
     def post(self, request):
         serializer = SyncPushPayloadSerializer(data=request.data, context={'request': request})
@@ -54,9 +60,14 @@ class SyncPullView(APIView):
     Envía al dispositivo móvil las actualizaciones de catálogos y reportes ocurridas en el servidor
     a partir del timestamp `since` proporcionado.
     
+    Seguridad:
+    - `throttle_scope = 'sync_pull'`: Previene el raspado (scraping) masivo y continuo
+      de los catálogos y reportes por IPs sospechosas (SEC-01).
+    
     Especificación: BACKEND_SPEC.md § 4.3
     """
     permission_classes = [AllowAny]
+    throttle_scope = 'sync_pull'
 
     def get(self, request):
         since_param = request.query_params.get('since')
