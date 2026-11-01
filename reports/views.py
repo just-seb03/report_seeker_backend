@@ -12,17 +12,16 @@ from .models import Usuario, Localizacion, Reporte, ReporteHistorial
 from .serializers import (
     UsuarioSerializer,
     UsuarioPublicSerializer,
-    LocalizacionSerializer,
     ReportePullSerializer,
     SyncPushPayloadSerializer,
-    decode_base64_file,
 )
 
 
 class LoginView(APIView):
     """
     POST /api/v1/auth/login/
-    Valida credenciales de faena (usuario_id + pin) y retorna token de sesión.
+    Valida credenciales de faena (usuario_id + pin) y retorna token de sesión y perfil de usuario.
+    Especificación: BACKEND_SPEC.md § 4.1
     """
     permission_classes = [AllowAny]
 
@@ -44,7 +43,7 @@ class LoginView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED
             )
 
-        if not usuario.check_pin(pin):
+        if not usuario.check_pin(str(pin)):
             return Response(
                 {'error': 'Credenciales inválidas o usuario inactivo.'},
                 status=status.HTTP_401_UNAUTHORIZED
@@ -69,11 +68,12 @@ class SyncPushView(APIView):
     """
     POST /api/v1/sync/push/
     Procesa en lote y de forma idempotente reportes y eventos de historial enviados por el móvil.
+    Especificación: BACKEND_SPEC.md § 4.2
     """
     permission_classes = [AllowAny]
 
     def post(self, request):
-        serializer = SyncPushPayloadSerializer(data=request.data)
+        serializer = SyncPushPayloadSerializer(data=request.data, context={'request': request})
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -90,7 +90,7 @@ class SyncPushView(APIView):
                 rep_uuid = rep['uuid']
                 local_id = rep.get('local_id')
 
-                # Resolver relaciones
+                # Resolver relaciones foráneas lógicas
                 usuario = None
                 if rep.get('usuario_id'):
                     usuario = Usuario.objects.filter(usuario_id=rep['usuario_id']).first()
@@ -114,17 +114,14 @@ class SyncPushView(APIView):
                     'estado': rep.get('estado', 'capturado'),
                 }
 
-                # Decodificar fotografía Base64 si viene adjunta
-                b64_foto = rep.get('fotografia_base64')
-                foto_file = None
-                if b64_foto:
-                    foto_file = decode_base64_file(b64_foto, file_prefix=f"rep_{local_id or 'ext'}")
-
+                # Operación idempotente: si el reporte ya existe por UUID, actualiza
                 reporte_obj, created = Reporte.objects.update_or_create(
                     uuid=rep_uuid,
                     defaults=defaults
                 )
 
+                # Si viene una fotografía decodificada por Base64ImageField, asignarla
+                foto_file = rep.get('fotografia_base64')
                 if foto_file:
                     reporte_obj.fotografia = foto_file
                     reporte_obj.save(update_fields=['fotografia'])
@@ -143,7 +140,7 @@ class SyncPushView(APIView):
 
                 reporte_obj = Reporte.objects.filter(uuid=rep_uuid).first()
                 if not reporte_obj:
-                    # Si no encontramos el reporte aún, no rompemos el lote
+                    # Si el reporte no fue encontrado (caso anómalo), continuar sin quebrar el lote
                     continue
 
                 usuario = None
@@ -160,6 +157,7 @@ class SyncPushView(APIView):
                     'fecha_cambio': hist['fecha_cambio'],
                 }
 
+                # Operación idempotente para entradas de historial
                 ReporteHistorial.objects.update_or_create(
                     uuid=hist_uuid,
                     defaults=hist_defaults
@@ -182,6 +180,7 @@ class SyncPullView(APIView):
     """
     GET /api/v1/sync/pull/?since=<ISO_TIMESTAMP>
     Envía al dispositivo móvil las actualizaciones de catálogos y reportes ocurridas en el backend.
+    Especificación: BACKEND_SPEC.md § 4.3
     """
     permission_classes = [AllowAny]
 
@@ -193,7 +192,7 @@ class SyncPullView(APIView):
 
         now = timezone.now()
 
-        # Filtrado incremental o catálogo completo
+        # Filtrado delta si se especifica timestamp 'since'
         if since_dt:
             locs_qs = Localizacion.objects.filter(updated_at__gte=since_dt, activo=True)
             users_qs = Usuario.objects.filter(updated_at__gte=since_dt)

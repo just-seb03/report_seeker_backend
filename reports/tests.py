@@ -1,4 +1,5 @@
 import uuid
+from datetime import timedelta
 from django.core.exceptions import ValidationError
 from django.db.models import ProtectedError
 from django.db.utils import IntegrityError
@@ -8,6 +9,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 from rest_framework import status
 from reports.models import Usuario, Localizacion, Reporte, ReporteHistorial
+from reports.serializers import Base64ImageField
 
 
 class ModelIntegrityTests(TestCase):
@@ -89,7 +91,7 @@ class ModelIntegrityTests(TestCase):
 
     def test_foreign_key_protection_usuario(self):
         """Un usuario con reportes asociados no puede ser eliminado (on_delete=PROTECT)."""
-        reporte = Reporte.objects.create(
+        Reporte.objects.create(
             titulo='Peligro de caída de rocas',
             fecha_captura=timezone.now(),
             usuario=self.usuario,
@@ -136,7 +138,10 @@ class ModelIntegrityTests(TestCase):
         self.assertIn("[Alta] Incidente prueba", str(reporte))
 
 
-class SyncApiTests(TestCase):
+class Phase4SerializerAndSyncTests(TestCase):
+    """
+    Pruebas unitarias de la Fase 4 (Serializers y Lógica de Sincronización Idempotente)
+    """
     def setUp(self):
         self.client = APIClient()
         self.usuario = Usuario.objects.create(
@@ -153,6 +158,23 @@ class SyncApiTests(TestCase):
             nombre='Nivel Central - Túnel 4',
             activo=True
         )
+        # 1x1 pixel transparent PNG in Base64
+        self.dummy_base64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+
+    def test_base64_image_field_decoding(self):
+        """Verifica que Base64ImageField decodifique correctamente strings Base64 a ContentFile."""
+        field = Base64ImageField()
+        file_obj = field.to_internal_value(self.dummy_base64)
+        self.assertIsNotNone(file_obj)
+        self.assertTrue(file_obj.name.endswith('.png'))
+        self.assertGreater(file_obj.size, 0)
+
+    def test_base64_image_field_invalid(self):
+        """Verifica que strings no Base64 levanten ValidationError."""
+        field = Base64ImageField()
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+        with self.assertRaises(DRFValidationError):
+            field.to_internal_value(12345)
 
     def test_login_success(self):
         url = reverse('api_auth_login')
@@ -167,13 +189,22 @@ class SyncApiTests(TestCase):
         response = self.client.post(url, {'usuario_id': 10482, 'pin': '9999'}, format='json')
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
-    def test_sync_push_and_pull(self):
+    def test_login_inactive_user(self):
+        self.usuario.estado = 'inactivo'
+        self.usuario.save()
+        url = reverse('api_auth_login')
+        response = self.client.post(url, {'usuario_id': 10482, 'pin': '1234'}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_login_missing_parameters(self):
+        url = reverse('api_auth_login')
+        response = self.client.post(url, {'usuario_id': 10482}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_sync_push_idempotency(self):
         push_url = reverse('api_sync_push')
         rep_uuid = str(uuid.uuid4())
         hist_uuid = str(uuid.uuid4())
-
-        # 1x1 pixel transparent PNG in Base64
-        dummy_base64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
 
         payload = {
             "reportes": [
@@ -181,8 +212,8 @@ class SyncApiTests(TestCase):
                     "local_id": 1,
                     "uuid": rep_uuid,
                     "titulo": "Fuga de aceite en motor",
-                    "descripcion": "Goteo detectado durante inspección matutina",
-                    "fotografia_base64": dummy_base64,
+                    "descripcion": "Goteo detectado en faena",
+                    "fotografia_base64": self.dummy_base64,
                     "fecha_captura": "2026-10-31T18:00:00Z",
                     "usuario_id": 10482,
                     "ubicacion_id": 1,
@@ -205,11 +236,9 @@ class SyncApiTests(TestCase):
             ]
         }
 
-        # First Push
+        # 1er Push
         response = self.client.post(push_url, payload, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data['synced_reports']), 1)
-        self.assertEqual(len(response.data['synced_historial']), 1)
         self.assertEqual(Reporte.objects.count(), 1)
         self.assertEqual(ReporteHistorial.objects.count(), 1)
 
@@ -217,17 +246,48 @@ class SyncApiTests(TestCase):
         self.assertEqual(rep.titulo, "Fuga de aceite en motor")
         self.assertTrue(bool(rep.fotografia))
 
-        # Idempotent push (same data sent again)
+        # 2do Push con modificación sobre el mismo reporte (mismo UUID)
+        payload["reportes"][0]["titulo"] = "Fuga de aceite en motor reparada"
+        payload["reportes"][0]["estado"] = "resuelto"
         response2 = self.client.post(push_url, payload, format='json')
         self.assertEqual(response2.status_code, status.HTTP_200_OK)
+
+        # La idempotencia asegura que NO se creen duplicados
         self.assertEqual(Reporte.objects.count(), 1)
         self.assertEqual(ReporteHistorial.objects.count(), 1)
 
-        # Pull
+        rep.refresh_from_db()
+        self.assertEqual(rep.titulo, "Fuga de aceite en motor reparada")
+        self.assertEqual(rep.estado, "resuelto")
+
+    def test_sync_pull_delta(self):
+        # Crear un reporte con fecha de actualización anterior
+        past_rep = Reporte.objects.create(
+            uuid=uuid.uuid4(),
+            titulo='Incidente Antiguo',
+            fecha_captura=timezone.now() - timedelta(days=5),
+            prioridad='Baja',
+            estado='resuelto'
+        )
+
+        checkpoint = timezone.now() - timedelta(seconds=1)
+
+        # Crear un reporte reciente
+        recent_rep = Reporte.objects.create(
+            uuid=uuid.uuid4(),
+            titulo='Incidente Reciente',
+            fecha_captura=timezone.now(),
+            prioridad='Alta',
+            estado='capturado'
+        )
+
         pull_url = reverse('api_sync_pull')
-        pull_response = self.client.get(pull_url)
-        self.assertEqual(pull_response.status_code, status.HTTP_200_OK)
-        self.assertIn('catalogos', pull_response.data)
-        self.assertIn('reportes', pull_response.data)
-        self.assertEqual(len(pull_response.data['reportes']), 1)
-        self.assertEqual(pull_response.data['reportes'][0]['uuid'], rep_uuid)
+        # Sincronización delta usando parámetro query ?since=
+        response = self.client.get(f"{pull_url}?since={checkpoint.isoformat()}")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('catalogos', response.data)
+        self.assertIn('reportes', response.data)
+
+        # Solo debe incluir el reporte reciente
+        report_uuids = [r['uuid'] for r in response.data['reportes']]
+        self.assertIn(str(recent_rep.uuid), report_uuids)

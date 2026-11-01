@@ -1,11 +1,58 @@
 import base64
 import uuid
+from typing import Optional
 from django.core.files.base import ContentFile
 from rest_framework import serializers
 from .models import Usuario, Localizacion, Reporte, ReporteHistorial
 
 
+class Base64ImageField(serializers.Field):
+    """
+    Campo personalizado de DRF para decodificar cadenas de imagen Base64
+    (data:image/webp;base64,... o Base64 puro) en archivos ContentFile para
+    ser almacenados en disco (MEDIA_ROOT).
+    """
+    def to_internal_value(self, data) -> Optional[ContentFile]:
+        if not data:
+            return None
+
+        if not isinstance(data, str):
+            raise serializers.ValidationError("El formato de la imagen debe ser un string Base64.")
+
+        ext = 'webp'
+        if 'base64,' in data:
+            header, base64_data = data.split('base64,', 1)
+            if 'image/webp' in header:
+                ext = 'webp'
+            elif 'image/png' in header:
+                ext = 'png'
+            elif 'image/jpeg' in header or 'image/jpg' in header:
+                ext = 'jpg'
+        else:
+            base64_data = data
+
+        try:
+            decoded_bytes = base64.b64decode(base64_data)
+        except Exception:
+            raise serializers.ValidationError("Cadena Base64 inválida o corrupta.")
+
+        filename = f"foto_{uuid.uuid4().hex[:10]}.{ext}"
+        return ContentFile(decoded_bytes, name=filename)
+
+    def to_representation(self, value) -> Optional[str]:
+        if not value:
+            return None
+        request = self.context.get('request')
+        if request and hasattr(value, 'url'):
+            return request.build_absolute_uri(value.url)
+        return getattr(value, 'url', None)
+
+
 class UsuarioSerializer(serializers.ModelSerializer):
+    """
+    Serializer completo de Usuario para descarga de catálogos (sincronización delta / pull).
+    Incluye pin hasheado para permitir la autenticación offline en terreno por parte del móvil.
+    """
     foto_perfil = serializers.SerializerMethodField()
 
     class Meta:
@@ -22,7 +69,7 @@ class UsuarioSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
 
-    def get_foto_perfil(self, obj):
+    def get_foto_perfil(self, obj: Usuario) -> Optional[str]:
         if obj.foto_perfil:
             request = self.context.get('request')
             if request:
@@ -32,6 +79,9 @@ class UsuarioSerializer(serializers.ModelSerializer):
 
 
 class UsuarioPublicSerializer(serializers.ModelSerializer):
+    """
+    Serializer público de Usuario para respuestas de login.
+    """
     foto_perfil = serializers.SerializerMethodField()
 
     class Meta:
@@ -45,7 +95,7 @@ class UsuarioPublicSerializer(serializers.ModelSerializer):
             'foto_perfil',
         ]
 
-    def get_foto_perfil(self, obj):
+    def get_foto_perfil(self, obj: Usuario) -> Optional[str]:
         if obj.foto_perfil:
             request = self.context.get('request')
             if request:
@@ -55,12 +105,18 @@ class UsuarioPublicSerializer(serializers.ModelSerializer):
 
 
 class LocalizacionSerializer(serializers.ModelSerializer):
+    """
+    Serializer de Localizacion para catálogos maestros.
+    """
     class Meta:
         model = Localizacion
         fields = ['id', 'nombre', 'activo', 'updated_at']
 
 
 class ReporteHistorialItemSerializer(serializers.Serializer):
+    """
+    Serializer para eventos de auditoría entrantes en sync/push.
+    """
     local_id = serializers.IntegerField(required=False)
     uuid = serializers.UUIDField(required=True)
     reporte_uuid = serializers.UUIDField(required=True)
@@ -73,11 +129,15 @@ class ReporteHistorialItemSerializer(serializers.Serializer):
 
 
 class ReportePushItemSerializer(serializers.Serializer):
+    """
+    Serializer para reportes entrantes en sync/push.
+    Acepta 'fotografia_base64' y la transforma en ContentFile.
+    """
     local_id = serializers.IntegerField(required=False)
     uuid = serializers.UUIDField(required=True)
     titulo = serializers.CharField(max_length=255)
     descripcion = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    fotografia_base64 = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    fotografia_base64 = Base64ImageField(required=False, allow_null=True)
     fecha_captura = serializers.DateTimeField()
     usuario_id = serializers.IntegerField(required=False, allow_null=True)
     usuario_nombre = serializers.CharField(max_length=150, required=False, allow_blank=True)
@@ -89,11 +149,18 @@ class ReportePushItemSerializer(serializers.Serializer):
 
 
 class SyncPushPayloadSerializer(serializers.Serializer):
+    """
+    Payload contenedor para la subida en lote (reportes e historiales).
+    """
     reportes = ReportePushItemSerializer(many=True, required=False, default=[])
     historial = ReporteHistorialItemSerializer(many=True, required=False, default=[])
 
 
 class ReportePullSerializer(serializers.ModelSerializer):
+    """
+    Serializer para sincronización delta descendente (sync/pull).
+    Resuelve la URL absoluta de la fotografía para que la app móvil la descargue.
+    """
     fotografia_url = serializers.SerializerMethodField()
     ubicacion = serializers.CharField(source='ubicacion_texto', read_only=True)
     ubicacion_id = serializers.SerializerMethodField()
@@ -117,7 +184,7 @@ class ReportePullSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
 
-    def get_fotografia_url(self, obj):
+    def get_fotografia_url(self, obj: Reporte) -> Optional[str]:
         if obj.fotografia:
             request = self.context.get('request')
             if request:
@@ -125,39 +192,8 @@ class ReportePullSerializer(serializers.ModelSerializer):
             return obj.fotografia.url
         return None
 
-    def get_ubicacion_id(self, obj):
+    def get_ubicacion_id(self, obj: Reporte) -> Optional[int]:
         return obj.localizacion_id if obj.localizacion else None
 
-    def get_usuario_id(self, obj):
+    def get_usuario_id(self, obj: Reporte) -> Optional[int]:
         return obj.usuario_id if obj.usuario else None
-
-
-def decode_base64_file(data_str: str, file_prefix: str = "img"):
-    """
-    Decodifica un string base64 (data URI o base64 puro) y retorna un ContentFile.
-    """
-    if not data_str or not isinstance(data_str, str):
-        return None
-
-    if 'base64,' in data_str:
-        header, base64_data = data_str.split('base64,', 1)
-        # Extraer extensión si está presente
-        if 'image/webp' in header:
-            ext = 'webp'
-        elif 'image/png' in header:
-            ext = 'png'
-        elif 'image/jpeg' in header or 'image/jpg' in header:
-            ext = 'jpg'
-        else:
-            ext = 'webp'
-    else:
-        base64_data = data_str
-        ext = 'webp'
-
-    try:
-        decoded_bytes = base64.b64decode(base64_data)
-        file_name = f"{file_prefix}_{uuid.uuid4().hex[:8]}.{ext}"
-        return ContentFile(decoded_bytes, name=file_name)
-    except Exception as e:
-        return None
-
