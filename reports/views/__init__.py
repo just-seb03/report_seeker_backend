@@ -19,6 +19,9 @@ from .sync_views import (
     SyncPushView,
     SyncPullView,
 )
+from .system_views import (
+    HealthCheckView,
+)
 from reports.services.otp_service import enmascarar_correo
 
 __all__ = [
@@ -31,6 +34,7 @@ __all__ = [
     'AuthPortalWebView',
     'SyncPushView',
     'SyncPullView',
+    'HealthCheckView',
     'enmascarar_correo',
 ]
 

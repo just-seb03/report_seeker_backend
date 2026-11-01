@@ -13,6 +13,8 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 import os
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -27,16 +29,28 @@ if _env_path.exists():
                 os.environ.setdefault(_k.strip(), _v.strip().strip("'\""))
 
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
+# -----------------------------------------------------------------------------
+# Mitigación SEC-07: Clave Criptográfica Secreta y Modo Seguro
+# -----------------------------------------------------------------------------
+_INSECURE_FALLBACK_KEY = 'django-insecure-jqa4jg3b27-11zpaswlu7juvrx9(t2b_8ym$dq88ai&a@bh!9c'
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY')
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'django-insecure-jqa4jg3b27-11zpaswlu7juvrx9(t2b_8ym$dq88ai&a@bh!9c')
+DEBUG = os.environ.get('DJANGO_DEBUG', 'True').lower() in ('true', '1')
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ.get('DJANGO_DEBUG', 'True') == 'True'
+if not SECRET_KEY:
+    if not DEBUG:
+        raise ImproperlyConfigured("CRÍTICO: Debes definir DJANGO_SECRET_KEY en el entorno cuando DEBUG=False.")
+    SECRET_KEY = _INSECURE_FALLBACK_KEY
 
-ALLOWED_HOSTS = ['*']
+# Configuración de Hosts Permitidos
+_raw_hosts = os.environ.get('DJANGO_ALLOWED_HOSTS', '*')
+if _raw_hosts == '*':
+    ALLOWED_HOSTS = ['*']
+else:
+    ALLOWED_HOSTS = [h.strip() for h in _raw_hosts.split(',') if h.strip()]
+
+# Soporte para túneles HTTPS y proxies inversos (Cloudflare Tunnels, Tailscale, Caddy, Nginx)
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 
 # Application definition

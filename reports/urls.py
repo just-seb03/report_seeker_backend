@@ -22,6 +22,7 @@ from reports.views import (
     ChangeEmailView,
     RequestPinResetView,
     VerifyPinResetView,
+    HealthCheckView,
 )
 
 urlpatterns = [
@@ -36,4 +37,7 @@ urlpatterns = [
     # --- Módulo de Sincronización Offline Bidireccional ---
     path('sync/push/', SyncPushView.as_view(), name='api_sync_push'),
     path('sync/pull/', SyncPullView.as_view(), name='api_sync_pull'),
+
+    # --- Módulo de Salud y Monitoreo del Sistema ---
+    path('health/', HealthCheckView.as_view(), name='api_health_check'),
 ]

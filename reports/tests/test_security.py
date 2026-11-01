@@ -106,3 +106,17 @@ class SecurityHardeningTests(TestCase):
         res_bloqueado = self.client.post(url, {'usuario_id': 10482, 'pin': '1234'}, format='json')
         self.assertEqual(res_bloqueado.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
         self.assertIn('bloqueada', res_bloqueado.data['error'])
+
+    def test_health_check_endpoint(self):
+        """
+        Fase 3: Verifica que el endpoint /api/v1/health/ retorne estado saludable
+        y conectividad a la base de datos sin filtrar secretos ni rutas.
+        """
+        url = reverse('api_health_check')
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['status'], 'healthy')
+        self.assertEqual(response.data['database'], 'connected')
+        self.assertIn('server_timestamp', response.data)
+        self.assertIn('is_https', response.data)
