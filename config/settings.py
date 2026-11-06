@@ -30,7 +30,7 @@ if _env_path.exists():
 
 
 # -----------------------------------------------------------------------------
-# Mitigación SEC-07: Clave Criptográfica Secreta y Modo Seguro
+# Configuración Criptográfica y Modo de Ejecución
 # -----------------------------------------------------------------------------
 _INSECURE_FALLBACK_KEY = 'django-insecure-jqa4jg3b27-11zpaswlu7juvrx9(t2b_8ym$dq88ai&a@bh!9c'
 SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY')
@@ -84,9 +84,9 @@ MIDDLEWARE = [
 ]
 
 # -----------------------------------------------------------------------------
-# Mitigación SEC-06: Restricción de Orígenes Cruzados (CORS Hardening)
+# Restricción de Orígenes Cruzados (CORS Hardening)
 # Permite únicamente clientes locales, emuladores y dispositivos en la subred de faena (RFC 1918)
-# Bloquea sitios web maliciosos externos (ej. evil-site.com) de hacer peticiones cross-origin
+# Bloquea orígenes web no autorizados de realizar solicitudes cross-origin
 # -----------------------------------------------------------------------------
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGIN_REGEXES = [
@@ -121,15 +121,33 @@ TEMPLATES = [
 WSGI_APPLICATION = 'config.wsgi.application'
 
 
-# Database
-# https://docs.djangoproject.com/en/6.1/ref/settings/#databases
+# -----------------------------------------------------------------------------
+# Base de Datos (Soporte para MySQL / MariaDB con fallback a SQLite)
+# -----------------------------------------------------------------------------
+_db_engine = os.environ.get('DB_ENGINE', 'mysql').lower()
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+if _db_engine == 'mysql':
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.mysql',
+            'NAME': os.environ.get('DB_NAME', 'report_seeker_db'),
+            'USER': os.environ.get('DB_USER', 'report_user'),
+            'PASSWORD': os.environ.get('DB_PASSWORD', 'report_password123'),
+            'HOST': os.environ.get('DB_HOST', '127.0.0.1'),
+            'PORT': os.environ.get('DB_PORT', '3306'),
+            'OPTIONS': {
+                'charset': 'utf8mb4',
+                'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+            },
+        }
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 
 # Password validation
@@ -182,8 +200,8 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.AllowAny',
     ],
-    # Mitigación SEC-02 y SEC-04: Limitación de tasa (Rate Limiting / Throttling)
-    # Protege contra fuerza bruta de PIN (10,000 combinaciones) y saturación de correos
+    # Limitación de tasa de solicitudes (Rate Limiting / Throttling defensivo)
+    # Protege contra intentos de fuerza bruta sobre el PIN de 4 dígitos y previene saturación de correos
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.AnonRateThrottle',
         'rest_framework.throttling.ScopedRateThrottle',
@@ -191,7 +209,7 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'anon': '120/minute',          # Tasa global para clientes anónimos
         'login': '15/minute',          # Máximo 15 intentos de login por IP/minuto (anti fuerza bruta)
-        'otp_request': '5/minute',     # Máximo 5 solicitudes OTP por minuto (anti mail-bombing)
+        'otp_request': '5/minute',     # Máximo 5 solicitudes OTP por minuto (anti saturación SMTP)
         'sync_pull': '60/minute',      # Límite para descarga de catálogos
         'sync_push': '60/minute',      # Límite para subida en lote
     },

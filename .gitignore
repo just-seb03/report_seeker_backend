@@ -11,6 +11,11 @@ __pycache__/
 # Media & uploads
 media/
 
-# Environment secrets
+# Environment secrets & backups
 .env
+datadump*.json
+*.dump
+GUIA_DESPLIEGUE_SEGURO_HTTPS.md
+
+
 
