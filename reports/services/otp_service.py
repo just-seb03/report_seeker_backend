@@ -3,11 +3,16 @@ Servicio de Autenticación y Recuperación de PIN vía OTP (One-Time Password).
 
 Este módulo encapsula toda la lógica de negocio correspondiente al ciclo de vida
 de los códigos de seguridad de un solo uso (OTP):
-1. Generación criptográfica segura de códigos de 6 dígitos.
-2. Despacho transaccional de correos electrónicos en formato HTML y texto plano.
+1. Generación criptográfica segura de códigos de 6 dígitos mediante CSPRNG.
+2. Despacho transaccional de correos electrónicos en formato HTML responsive y texto plano.
 3. Validación y consumo de códigos con protección anti-fuerza bruta.
 4. Actualización sincronizada del PIN tanto en el modelo de dominio (Usuario)
-   como en el subsistema de usuarios de Django (auth.User).
+   como en el subsistema de autenticación de Django (auth.User).
+
+Dónde se utiliza:
+- En `reports/views/auth_views.py` (`RequestPinResetView` y `VerifyPinResetView`) para procesar
+  la solicitud y verificación de códigos OTP solicitados desde la app móvil o el portal web.
+- En las pruebas de recuperación de contraseña: `reports/tests/test_auth.py` y `reports/tests/test_security.py`.
 """
 
 import datetime

@@ -1,5 +1,16 @@
 """
 Serializadores para flujos de autenticación, verificación de trabajadores y recuperación de PIN.
+
+Este módulo contiene las clases serializadoras para la validación de credenciales de acceso:
+- `VerifyWorkerSerializer`: Comprueba la existencia y vigencia de la credencial de faena y correo.
+- `PinRecoverySerializer`: Valida el formato numérico del nuevo PIN de 4 dígitos para recuperación.
+- `ChangeEmailSerializer`: Valida el cambio de correo corporativo autenticado con el PIN actual.
+- `RequestPinResetSerializer`: Valida la solicitud de generación de código OTP de 6 dígitos.
+- `VerifyPinResetSerializer`: Comprueba el código OTP de 6 dígitos y valida el nuevo PIN de 4 dígitos.
+
+Dónde se utiliza:
+- En `reports/views/auth_views.py` como capa de validación para las vistas de inicio de sesión,
+  recuperación de clave y gestión de credenciales consumidas por la aplicación móvil y el portal web.
 """
 
 import re
@@ -11,6 +22,10 @@ from reports.models import Usuario
 class VerifyWorkerSerializer(serializers.Serializer):
     """
     Valida la existencia de un trabajador activo a partir de su ID y correo registrado.
+    
+    Dónde se utiliza:
+    - En `VerifyWorkerView` (`/api/v1/auth/verify-worker/`) para verificar si el usuario
+      pertenece a la nómina de faena antes de proceder con trámites administrativos.
     """
     usuario_id = serializers.IntegerField(min_value=10000, max_value=99999)
     correo = serializers.EmailField()
@@ -33,9 +48,12 @@ class VerifyWorkerSerializer(serializers.Serializer):
 
 class PinRecoverySerializer(serializers.Serializer):
     """
-    Permite restablecer el PIN de 4 dígitos de un trabajador activo.
+    Valida los datos para restablecer el PIN de 4 dígitos de un trabajador activo.
     
-    Acepta tanto 'nuevo_pin' como 'pin' como claves de entrada para retrocompatibilidad.
+    Acepta tanto 'nuevo_pin' como 'pin' como claves de entrada para compatibilidad con distintas versiones de la app.
+    
+    Dónde se utiliza:
+    - En `PinRecoveryView` (`/api/v1/auth/pin-recovery/`) para actualización de clave.
     """
     usuario_id = serializers.IntegerField(min_value=10000, max_value=99999)
     correo = serializers.EmailField(required=False, allow_null=True, allow_blank=True)
@@ -76,7 +94,11 @@ class PinRecoverySerializer(serializers.Serializer):
 
 class ChangeEmailSerializer(serializers.Serializer):
     """
-    Permite a un usuario autenticado mediante su PIN actualizar su correo corporativo.
+    Valida la solicitud de actualización de correo corporativo previa comprobación del PIN actual.
+    
+    Dónde se utiliza:
+    - En `ChangeEmailView` (`/api/v1/auth/change-email/`), consumido desde el modal
+      de perfil en la app móvil (`ChangeEmailModal.tsx`) y desde el portal web.
     """
     usuario_id = serializers.IntegerField(min_value=10000, max_value=99999)
     pin = serializers.CharField(max_length=128)
@@ -107,12 +129,17 @@ class ChangeEmailSerializer(serializers.Serializer):
 
 class RequestPinResetSerializer(serializers.Serializer):
     """
-    Valida la solicitud de generación de código OTP de 6 dígitos.
+    Valida la solicitud para la generación y envío del código OTP de 6 dígitos.
     
-    Seguridad (SEC-04 - Mitigación de Enumeración de Usuarios):
-    - Valida que usuario_id sea un número de 5 dígitos (10000 - 99999).
-    - Si el usuario no existe, no arroja un error 400 diferenciado; en su lugar
-      asigna `usuario = None` para que la vista retorne una respuesta neutral idéntica.
+    Mecanismo de seguridad (Prevención de Enumeración de Cuentas):
+    - Valida que `usuario_id` sea un número válido de 5 dígitos (entre 10000 y 99999).
+    - Si el usuario no existe en la base de datos, no interrumpe con error 400 visible;
+      en su lugar asigna `usuario = None` para que la vista retorne una respuesta
+      unificada y neutra que no revele la existencia del registro a posibles atacantes.
+    
+    Dónde se utiliza:
+    - En `RequestPinResetView` (`/api/v1/auth/request-pin-reset/`), invocado en el paso 1
+      de recuperación de contraseña desde la aplicación móvil y el portal web.
     """
     usuario_id = serializers.IntegerField(min_value=10000, max_value=99999)
     correo = serializers.EmailField(required=False, allow_null=True, allow_blank=True)
@@ -128,9 +155,13 @@ class VerifyPinResetSerializer(serializers.Serializer):
     Valida el código OTP de 6 dígitos ingresado por el usuario y el nuevo PIN de 4 dígitos.
     
     Protecciones incorporadas:
-    - Verificación de formato numérico de 6 dígitos para OTP y 4 dígitos para PIN.
-    - Expiración temporal (15 minutos).
-    - Límite de 5 intentos fallidos para prevenir ataques de fuerza bruta.
+    - Verificación de formato numérico de 6 dígitos para el OTP y 4 dígitos para el PIN.
+    - Control de caducidad temporal (validez máxima de 15 minutos).
+    - Límite estricto de 5 intentos fallidos antes de invalidar el código, mitigando ataques de fuerza bruta.
+    
+    Dónde se utiliza:
+    - En `VerifyPinResetView` (`/api/v1/auth/verify-pin-reset/`), invocado en el paso 2
+      de recuperación de clave para consolidar el cambio de PIN.
     """
     usuario_id = serializers.IntegerField(min_value=10000, max_value=99999)
     codigo = serializers.CharField(max_length=6, min_length=6)
@@ -191,4 +222,5 @@ class VerifyPinResetSerializer(serializers.Serializer):
         attrs['otp_obj'] = otp
         attrs['nuevo_pin'] = pin_str
         return attrs
+
 

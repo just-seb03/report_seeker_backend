@@ -1,12 +1,16 @@
 """
-Pruebas Unitarias de Seguridad y Hardening Defensivo (Fases 1 y 2).
+Pruebas Unitarias de Seguridad y Hardening Defensivo.
 
-Verifica:
-1. Rechazo de payloads gigantes en Base64 (>10 MB) para prevención de DoS.
-2. Validación de formatos binarios de imágenes (Magic Bytes).
-3. Presencia de cabeceras de seguridad HTTP en las respuestas del servidor.
-4. Mitigación de enumeración de usuarios en solicitud de OTP (SEC-04).
-5. Bloqueo temporal de cuenta (Account Lockout) tras intentos fallidos repetidos (SEC-02).
+Este módulo comprueba las protecciones de infraestructura y aplicación implementadas en el backend:
+1. Rechazo de payloads excesivos en Base64 (>10 MB) para prevención de ataques DoS por memoria.
+2. Validación de firmas binarias reales (Magic Bytes) en imágenes.
+3. Presencia obligatoria de cabeceras de seguridad HTTP (X-Content-Type-Options, X-Frame-Options).
+4. Respuestas neutrales para evitar la enumeración de usuarios en solicitudes de recuperación de clave.
+5. Bloqueo temporal automático de cuenta (Account Lockout) tras 5 intentos fallidos consecutivos de PIN.
+6. Monitoreo de disponibilidad del nodo a través del endpoint /health/.
+
+Dónde se utiliza:
+- Ejecutado en las pruebas automatizadas del proyecto para asegurar que las políticas de seguridad se mantengan activas.
 """
 
 from django.core import mail
@@ -21,7 +25,7 @@ from reports.serializers.common import Base64ImageField, MAX_BASE64_PAYLOAD_BYTE
 
 class SecurityHardeningTests(TestCase):
     """
-    Pruebas automatizadas de defensas y mitigaciones de seguridad.
+    Pruebas automatizadas de las defensas y controles de seguridad del sistema.
     """
     def setUp(self):
         cache.clear()
@@ -48,19 +52,19 @@ class SecurityHardeningTests(TestCase):
         self.assertIn("excede el límite máximo permitido", str(ctx.exception))
 
     def test_base64_non_string_rejection(self):
-        """Rechaza tipos no string."""
+        """Rechaza tipos de datos no compatibles con cadenas."""
         field = Base64ImageField()
         with self.assertRaises(ValidationError):
             field.to_internal_value([1, 2, 3])
 
     def test_base64_corrupt_data_rejection(self):
-        """Rechaza cadenas Base64 corruptas."""
+        """Rechaza cadenas Base64 corruptas o mal formadas."""
         field = Base64ImageField()
         with self.assertRaises(ValidationError):
             field.to_internal_value("data:image/png;base64,???no-es-base64-valido???")
 
     def test_http_security_headers_present(self):
-        """Verifica que las cabeceras defensivas nosniff y X-Frame-Options estén presentes."""
+        """Verifica que las cabeceras defensivas nosniff y X-Frame-Options estén presentes en las respuestas."""
         url = reverse('api_auth_login')
         response = self.client.post(url, {}, content_type='application/json')
 
@@ -71,8 +75,8 @@ class SecurityHardeningTests(TestCase):
 
     def test_user_enumeration_neutral_response(self):
         """
-        SEC-04: Verifica que enviar un ID inexistente retorne 200 OK con respuesta neutral
-        sin revelar si el usuario existe o no y sin enviar correos.
+        Verifica que solicitar la recuperación para un usuario inexistente retorne HTTP 200 OK
+        con respuesta neutral sin enviar correos ni revelar la inexistencia del registro.
         """
         mail.outbox.clear()
         url = reverse('api_auth_request_pin_reset')
@@ -86,12 +90,12 @@ class SecurityHardeningTests(TestCase):
 
     def test_account_lockout_after_multiple_failed_logins(self):
         """
-        SEC-02: Verifica que tras 5 intentos fallidos consecutivos de PIN,
-        la cuenta quede bloqueada temporalmente (HTTP 429 Too Many Requests).
+        Verifica que tras 5 intentos fallidos consecutivos de PIN,
+        la cuenta quede temporalmente bloqueada (HTTP 429 Too Many Requests).
         """
         url = reverse('api_auth_login')
 
-        # 4 intentos fallidos: retornan 401 Unauthorized
+        # 4 intentos fallidos: retornan 401 Unauthorized indicando intentos restantes
         for i in range(1, 5):
             res = self.client.post(url, {'usuario_id': 10482, 'pin': '0000'}, format='json')
             self.assertEqual(res.status_code, status.HTTP_401_UNAUTHORIZED)
@@ -102,15 +106,15 @@ class SecurityHardeningTests(TestCase):
         self.assertEqual(res5.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
         self.assertIn('bloqueada', res5.data['error'])
 
-        # Intento subsiguiente (incluso con el PIN correcto): permanece bloqueado
+        # Intento subsiguiente (incluso con el PIN correcto): permanece bloqueado durante el período de castigo
         res_bloqueado = self.client.post(url, {'usuario_id': 10482, 'pin': '1234'}, format='json')
         self.assertEqual(res_bloqueado.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
         self.assertIn('bloqueada', res_bloqueado.data['error'])
 
     def test_health_check_endpoint(self):
         """
-        Fase 3: Verifica que el endpoint /api/v1/health/ retorne estado saludable
-        y conectividad a la base de datos sin filtrar secretos ni rutas.
+        Verifica que el endpoint /api/v1/health/ retorne estado saludable
+        y conectividad a la base de datos sin filtrar secretos ni rutas del servidor.
         """
         url = reverse('api_health_check')
         response = self.client.get(url)
@@ -120,3 +124,4 @@ class SecurityHardeningTests(TestCase):
         self.assertEqual(response.data['database'], 'connected')
         self.assertIn('server_timestamp', response.data)
         self.assertIn('is_https', response.data)
+

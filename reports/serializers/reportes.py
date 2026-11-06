@@ -1,5 +1,18 @@
 """
-Serializadores para Reportes de incidencias y eventos de bitácora/auditoría.
+Serializadores para Reportes de incidencias, eventos de bitácora/auditoría y sincronización.
+
+Este módulo provee las estructuras de serialización y deserialización para incidencias:
+- `ReporteHistorialItemSerializer`: Valida eventos de auditoría (cambios de campo, autor, fechas).
+- `ReportePushItemSerializer`: Valida cada reporte enviado en la sincronización en lote (`sync/push`),
+  manejando la decodificación de fotos en Base64.
+- `SyncPushPayloadSerializer`: Contenedor para el conjunto de reportes e historiales subidos por el móvil.
+- `ReportePullSerializer`: Serializa reportes desde el servidor hacia el cliente móvil (`sync/pull`),
+  construyendo URLs públicas absolutas para las fotografías.
+- `ReporteSerializer`: Serializador completo de modelo para operaciones CRUD navegables.
+
+Dónde se utiliza:
+- En `reports/views/sync_views.py` para la sincronización con el cliente móvil (`SyncService.ts`).
+- En `reports/views/crud_views.py` para la API REST navegable (`/api/v1/reportes/`).
 """
 
 from typing import Optional
@@ -10,7 +23,10 @@ from .common import Base64ImageField
 
 class ReporteHistorialItemSerializer(serializers.Serializer):
     """
-    Validador de eventos de bitácora y cambios entrantes en el lote de `sync/push`.
+    Validador de eventos individuales de bitácora y cambios de estado en lote (`sync/push`).
+    
+    Dónde se utiliza:
+    - En `SyncPushPayloadSerializer` para procesar la lista `historial` enviada por el móvil.
     """
     local_id = serializers.IntegerField(required=False)
     uuid = serializers.UUIDField(required=True)
@@ -25,9 +41,12 @@ class ReporteHistorialItemSerializer(serializers.Serializer):
 
 class ReportePushItemSerializer(serializers.Serializer):
     """
-    Validador de reportes individuales entrantes en el lote de `sync/push`.
+    Validador de incidencias individuales enviadas por el dispositivo móvil en lote (`sync/push`).
     
-    Acepta 'fotografia_base64' para ser decodificada y guardada en disco.
+    Acepta el campo 'fotografia_base64' para ser decodificado y persistido en almacenamiento local.
+    
+    Dónde se utiliza:
+    - En `SyncPushPayloadSerializer` para procesar la lista `reportes` enviada por el móvil.
     """
     local_id = serializers.IntegerField(required=False)
     uuid = serializers.UUIDField(required=True)
@@ -46,7 +65,10 @@ class ReportePushItemSerializer(serializers.Serializer):
 
 class SyncPushPayloadSerializer(serializers.Serializer):
     """
-    Payload contenedor para la subida en lote de reportes y eventos de historial.
+    Payload contenedor para la subida masiva e idempotente de reportes y bitácoras.
+    
+    Dónde se utiliza:
+    - En `SyncPushView` (`/api/v1/sync/push/`), consumido directamente por `SyncService.ts`.
     """
     reportes = ReportePushItemSerializer(many=True, required=False, default=[])
     historial = ReporteHistorialItemSerializer(many=True, required=False, default=[])
@@ -54,9 +76,13 @@ class SyncPushPayloadSerializer(serializers.Serializer):
 
 class ReportePullSerializer(serializers.ModelSerializer):
     """
-    Serializer para sincronización delta descendente (servidor -> móvil).
+    Serializador delta descendente para enviar reportes desde el servidor hacia el móvil.
     
-    Resuelve la URL pública de la fotografía y desnormaliza los campos de usuario y ubicación.
+    Resuelve la URL pública absoluta de las fotografías y desnormaliza campos de autor y localización.
+    
+    Dónde se utiliza:
+    - En `SyncPullView` (`/api/v1/sync/pull/`), consumido por `SyncService.ts` para
+      actualizar el almacenamiento local SQLite del teléfono.
     """
     fotografia_url = serializers.SerializerMethodField()
     ubicacion = serializers.CharField(source='ubicacion_texto', read_only=True)
@@ -97,4 +123,38 @@ class ReportePullSerializer(serializers.ModelSerializer):
     def get_usuario_id(self, obj: Reporte) -> Optional[int]:
         """Obtiene el ID del usuario autor si existe."""
         return obj.usuario_id if obj.usuario else None
+
+
+class ReporteSerializer(serializers.ModelSerializer):
+    """
+    Serializador integral basado en ModelSerializer para el modelo Reporte.
+    
+    Mapea automáticamente los campos del modelo para permitir operaciones completas
+    (GET, POST, PUT, PATCH, DELETE) en la API REST navegable.
+    
+    Dónde se utiliza:
+    - En `ReporteViewSet` (`/api/v1/reportes/`), utilizado en la interfaz web de DRF
+      y por herramientas externas de supervisión.
+    """
+    class Meta:
+        model = Reporte
+        fields = [
+            'id',
+            'uuid',
+            'titulo',
+            'descripcion',
+            'fotografia',
+            'fecha_captura',
+            'usuario',
+            'usuario_nombre',
+            'usuario_cargo',
+            'localizacion',
+            'ubicacion_texto',
+            'prioridad',
+            'estado',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'uuid', 'created_at', 'updated_at']
+
 

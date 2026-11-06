@@ -1,9 +1,15 @@
 """
 Controladores de Sincronización de Datos Offline (Push & Pull).
 
-Este módulo expone los endpoints que utiliza el motor de sincronización del cliente móvil:
-- `SyncPushView`: Recepción en lote de reportes e historiales generados offline en faena.
-- `SyncPullView`: Descarga delta de catálogos y reportes modificados en el servidor.
+Este módulo gestiona la sincronización bidireccional entre la base de datos central
+y los dispositivos móviles que operan sin conexión en terreno:
+- `SyncPushView`: Recepción en lote de reportes e historiales de cambios generados offline.
+- `SyncPullView`: Descarga incremental (delta) de catálogos y reportes modificados en el servidor.
+
+Dónde se utiliza:
+- En la aplicación móvil: `SyncService.ts` invoca periódicamente `SyncPushView` para subir
+  la cola de reportes pendientes y `SyncPullView` para actualizar la base de datos local SQLite.
+- En las pruebas de sincronización: `reports/tests/test_sync.py`.
 """
 
 from django.utils.dateparse import parse_datetime
@@ -27,13 +33,17 @@ class SyncPushView(APIView):
     """
     POST /api/v1/sync/push/
     
-    Procesa en lote y de forma idempotente reportes y eventos de historial enviados por el móvil.
+    Procesa de manera atómica e idempotente los lotes de reportes e historiales de auditoría
+    enviados por los dispositivos móviles.
     
-    Seguridad:
-    - `throttle_scope = 'sync_push'`: Limita la tasa de subidas masivas concurrentes
-      para evitar saturación de disco y memoria (SEC-03/SEC-05).
+    Mecanismos de protección:
+    - Limitación de tasa (`throttle_scope = 'sync_push'`): Máximo 60 peticiones por minuto
+      para prevenir sobrecarga de disco y saturación de memoria durante subidas masivas.
+    - Idempotencia por UUID: Previene la duplicación de reportes ante reintentos de red.
     
-    Especificación: BACKEND_SPEC.md § 4.2
+    Dónde se utiliza:
+    - En `SyncService.ts` de la aplicación móvil cuando el dispositivo recupera conectividad
+      y vacía su cola local de registros pendientes de subida.
     """
     permission_classes = [AllowAny]
     throttle_scope = 'sync_push'
@@ -57,14 +67,16 @@ class SyncPullView(APIView):
     """
     GET /api/v1/sync/pull/?since=<ISO_TIMESTAMP>
     
-    Envía al dispositivo móvil las actualizaciones de catálogos y reportes ocurridas en el servidor
-    a partir del timestamp `since` proporcionado.
+    Envía al dispositivo móvil únicamente los registros que hayan sufrido cambios en el servidor
+    a partir de la fecha y hora (`since`) provista por el cliente móvil.
     
-    Seguridad:
-    - `throttle_scope = 'sync_pull'`: Previene el raspado (scraping) masivo y continuo
-      de los catálogos y reportes por IPs sospechosas (SEC-01).
+    Mecanismos de protección:
+    - Limitación de tasa (`throttle_scope = 'sync_pull'`): Restringe descargas excesivas
+      o continuas por parte de clientes automatizados.
     
-    Especificación: BACKEND_SPEC.md § 4.3
+    Dónde se utiliza:
+    - En el arranque de la aplicación móvil y en cada ciclo de sincronización de `SyncService.ts`
+      para actualizar los catálogos maestros (usuarios, localizaciones) y reportes recientes en SQLite local.
     """
     permission_classes = [AllowAny]
     throttle_scope = 'sync_pull'
@@ -96,4 +108,5 @@ class SyncPullView(APIView):
             'catalogos': catalogos,
             'reportes': reportes_data,
         }, status=status.HTTP_200_OK)
+
 

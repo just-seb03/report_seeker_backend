@@ -1,5 +1,13 @@
 """
-Serializadores y campos comunes reutilizables con Hardening de Seguridad.
+Serializadores y campos comunes reutilizables con validación de seguridad.
+
+Este módulo provee campos y transformadores de datos compartidos entre múltiples serializadores:
+- `Base64ImageField`: Campo personalizado de DRF que decodifica cadenas Base64 o Data URIs
+  provenientes de la cámara o galería del móvil y las convierte en archivos binarios de Django.
+
+Dónde se utiliza:
+- En `reports/serializers/reportes.py`: Utilizado por `ReportePushItemSerializer` para recibir
+  y validar las fotografías de incidencias capturadas en faena durante la sincronización por lotes (`sync/push`).
 """
 
 import base64
@@ -8,8 +16,8 @@ from typing import Optional
 from django.core.files.base import ContentFile
 from rest_framework import serializers
 
-# Tamaño máximo permitido para cadenas Base64: 10 MB (~7.5 MB binario)
-# Mitiga ataques de denegación de servicio por agotamiento de memoria (SEC-05)
+# Tamaño máximo permitido para cadenas Base64: 10 MB (~7.5 MB binario desensamblado).
+# Previene el agotamiento de memoria RAM en el servidor ante subidas excesivas o maliciosas.
 MAX_BASE64_PAYLOAD_BYTES = 10 * 1024 * 1024
 
 # Firmas binarias (Magic Numbers) de formatos de imagen permitidos
@@ -24,12 +32,16 @@ class Base64ImageField(serializers.Field):
     """
     Campo personalizado de DRF para decodificar de forma segura imágenes Base64.
     
-    Protecciones de seguridad implementadas:
-    1. Límite estricto de tamaño en el payload de entrada (máx. 10 MB) para prevenir
-       ataques de Denegación de Servicio por sobrecarga de memoria (OOM DoS).
-    2. Inspección de encabezados binarios (Magic Numbers) para garantizar que los
-       bytes recibidos correspondan efectivamente a imágenes legítimas (PNG, JPEG, WebP)
-       y rechazar scripts ejecutables o archivos binarios maliciosos.
+    Protecciones implementadas:
+    1. Límite de tamaño estricto en el payload de entrada (máx. 10 MB) para prevenir
+       agotamiento de memoria (OOM DoS) en el servidor.
+    2. Inspección de encabezados binarios (Magic Numbers) para asegurar que los
+       bytes recibidos correspondan a formatos de imagen válidos (PNG, JPEG, WebP)
+       y rechazar scripts o ejecutables disfrazados.
+    
+    Dónde se utiliza:
+    - En la recepción de fotos tomadas con la cámara del dispositivo móvil
+      al crear o actualizar un reporte de incidencia.
     """
 
     def to_internal_value(self, data) -> Optional[ContentFile]:
@@ -52,7 +64,7 @@ class Base64ImageField(serializers.Field):
         if not isinstance(data, str):
             raise serializers.ValidationError("El formato de la imagen debe ser un string Base64.")
 
-        # 1. Mitigación SEC-05: Validación temprana de longitud máxima de la cadena
+        # 1. Validación temprana de longitud máxima de la cadena para proteger la memoria
         if len(data) > MAX_BASE64_PAYLOAD_BYTES:
             raise serializers.ValidationError(
                 "La fotografía enviada excede el límite máximo permitido de 10 MB."
@@ -70,7 +82,7 @@ class Base64ImageField(serializers.Field):
         else:
             base64_data = data
 
-        # 2. Decodificación controlada con validación estricta de caracteres Base64
+        # 2. Decodificación controlada con validación estricta del alfabeto Base64
         try:
             decoded_bytes = base64.b64decode(base64_data, validate=True)
             if not decoded_bytes:
@@ -90,7 +102,7 @@ class Base64ImageField(serializers.Field):
             es_valido = True
             ext = 'webp'
         elif len(decoded_bytes) > 0 and ext in ('webp', 'png', 'jpg'):
-            # Tolerancia para buffers válidos de prueba
+            # Tolerancia para buffers válidos generados en pruebas automatizadas
             es_valido = True
 
         if not es_valido:
@@ -111,3 +123,4 @@ class Base64ImageField(serializers.Field):
         if request and hasattr(value, 'url'):
             return request.build_absolute_uri(value.url)
         return getattr(value, 'url', None)
+

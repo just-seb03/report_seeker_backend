@@ -1,13 +1,20 @@
 """
 Controladores de Autenticación, Credenciales y Gestión de PIN.
 
-Este módulo expone los endpoints REST para:
-- Inicio de sesión con credencial de faena (usuario_id + PIN).
-- Verificación de operarios activos.
-- Solicitud de código OTP de 6 dígitos por correo para recuperación de PIN.
-- Verificación del código OTP y actualización segura de PIN.
-- Cambio de correo corporativo.
-- Vista web del portal de autoservicio para faena.
+Este módulo expone los endpoints REST para la seguridad y control de acceso:
+- `LoginView`: Validación de credenciales operativas (usuario_id + PIN) y emisión de token DRF.
+- `VerifyWorkerView`: Comprobación previa de existencia y estado activo del trabajador.
+- `PinRecoveryView`: Actualización directa de PIN validado mediante credencial.
+- `RequestPinResetView`: Generación y despacho de código OTP de 6 dígitos al correo corporativo.
+- `VerifyPinResetView`: Validación del código OTP de un solo uso y actualización segura del PIN.
+- `ChangeEmailView`: Actualización de la dirección de correo corporativo mediante validación de PIN.
+- `AuthPortalWebView`: Interfaz web de autoservicio para recuperación de accesos desde navegadores.
+
+Dónde se utiliza:
+- En la aplicación móvil: `LoginScreen.tsx` (inicio de sesión), `PinRecoveryModal.tsx`
+  (recuperación de clave por código OTP) y `ChangeEmailModal.tsx` (cambio de correo).
+- En el cliente web: `reports/templates/reports/auth_portal.html` (portal de autoservicio).
+- En las pruebas de integración: `reports/tests/test_auth.py` y `reports/tests/test_security.py`.
 """
 
 import logging
@@ -43,15 +50,19 @@ class LoginView(APIView):
     """
     POST /api/v1/auth/login/
     
-    Valida credenciales de faena (usuario_id + pin) y retorna token de sesión DRF
-    junto con los datos del perfil público del operario.
+    Valida las credenciales del trabajador (usuario_id + PIN) y retorna el token de sesión
+    de Django REST Framework junto con la información pública del perfil del usuario.
     
-    Seguridad (Fase 1 y Fase 2):
-    - `throttle_scope = 'login'`: Límite estricto por IP (máx. 15/min) para mitigar fuerza bruta (SEC-02).
-    - Bloqueo Progresivo de Cuenta (Account Lockout): Bloquea el usuario durante 5 minutos
-      tras 5 intentos fallidos consecutivos de PIN (neutraliza ataques distribuidos multi-IP).
+    Mecanismos de protección:
+    - Limitación de tasa (`throttle_scope = 'login'`): Restringe las solicitudes por IP
+      (máximo 15 intentos por minuto) para mitigar ataques automatizados de fuerza bruta.
+    - Bloqueo temporal de cuenta (Account Lockout): Si se registran 5 intentos fallidos
+      consecutivos de PIN sobre una misma credencial, la cuenta se bloquea automáticamente
+      durante 5 minutos, protegiendo contra ataques distribuidos desde múltiples direcciones IP.
     
-    Especificación: BACKEND_SPEC.md § 4.1
+    Dónde se utiliza:
+    - En la pantalla de ingreso principal de la aplicación móvil (`LoginScreen.tsx`).
+    - En la autenticación del portal web de autoservicio (`auth_portal.html`).
     """
     permission_classes = [AllowAny]
     throttle_scope = 'login'
@@ -69,7 +80,7 @@ class LoginView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # 1. Comprobar si la cuenta está en período de bloqueo por fuerza bruta
+        # 1. Comprobar si la cuenta se encuentra temporalmente bloqueada por intentos fallidos
         lockout_key = f"login_lockout_{usuario_id}"
         fails_key = f"login_fails_{usuario_id}"
 
@@ -90,7 +101,7 @@ class LoginView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED
             )
 
-        # 2. Validar PIN
+        # 2. Validar el PIN numérico
         if not usuario.check_pin(str(pin)):
             intentos_previos = cache.get(fails_key, 0) + 1
             if intentos_previos >= self.MAX_INTENTOS_FALLIDOS:
@@ -113,11 +124,11 @@ class LoginView(APIView):
                     status=status.HTTP_401_UNAUTHORIZED
                 )
 
-        # 3. Login exitoso: limpiar contadores de intentos fallidos
+        # 3. Acceso exitoso: reiniciar contadores de intentos fallidos
         cache.delete(fails_key)
         cache.delete(lockout_key)
 
-        # Vincular o crear usuario estándar de Django para generar token DRF
+        # Sincronizar o crear el registro correspondiente en auth.User para emisión del token DRF
         django_user, _ = User.objects.get_or_create(
             username=str(usuario.usuario_id),
             defaults={'first_name': usuario.nombre, 'email': usuario.correo}
@@ -136,7 +147,12 @@ class VerifyWorkerView(APIView):
     """
     POST /api/v1/auth/verify-worker/
     
-    Valida si el ID y correo corresponden a un usuario activo registrado en faena.
+    Verifica si una credencial de 5 dígitos y su correo electrónico asociado corresponden
+    a un trabajador actualmente activo en los registros centrales.
+    
+    Dónde se utiliza:
+    - En el paso previo de validación de identidad en la aplicación móvil antes de permitir
+      operaciones sensibles o inicio de flujos de soporte.
     """
     permission_classes = [AllowAny]
 
@@ -161,7 +177,11 @@ class PinRecoveryView(APIView):
     """
     POST /api/v1/auth/pin-recovery/
     
-    Restablece el PIN del usuario activo previa validación de su identificador.
+    Permite restablecer directamente el PIN de acceso de un operario activo tras validar
+    su número de credencial y datos registrados.
+    
+    Dónde se utiliza:
+    - En flujos de recuperación directa administrada o soporte asistido en terreno.
     """
     permission_classes = [AllowAny]
 
@@ -176,7 +196,7 @@ class PinRecoveryView(APIView):
         usuario.set_pin(nuevo_pin)
         usuario.save(update_fields=['pin', 'updated_at'])
 
-        # Sincronizar contraseña de Django User (para autenticación DRF)
+        # Sincronizar contraseña del usuario en auth.User para autenticación DRF
         django_user, _ = User.objects.get_or_create(
             username=str(usuario.usuario_id),
             defaults={'first_name': usuario.nombre, 'email': usuario.correo}
@@ -196,7 +216,11 @@ class ChangeEmailView(APIView):
     """
     POST /api/v1/auth/change-email/
     
-    Actualiza el correo corporativo del trabajador tras validar su PIN de seguridad.
+    Actualiza la casilla de correo corporativo del trabajador previa comprobación de su PIN actual.
+    
+    Dónde se utiliza:
+    - En el modal de configuración de perfil de la aplicación móvil (`ChangeEmailModal.tsx`).
+    - En la pestaña de cambio de correo del portal web de autoservicio (`auth_portal.html`).
     """
     permission_classes = [AllowAny]
 
@@ -211,7 +235,7 @@ class ChangeEmailView(APIView):
         usuario.correo = nuevo_correo
         usuario.save(update_fields=['correo', 'updated_at'])
 
-        # Mantener sincronizado User de Django si existe
+        # Mantener sincronizado el usuario interno de Django
         User.objects.filter(username=str(usuario.usuario_id)).update(email=nuevo_correo)
 
         return Response({
@@ -227,11 +251,18 @@ class RequestPinResetView(APIView):
     POST /api/v1/auth/request-pin-reset/
     
     Genera un código OTP de 6 dígitos y lo envía al correo corporativo del trabajador
-    para permitir la recuperación de su PIN de acceso de forma segura.
+    para permitir el restablecimiento de su clave de 4 dígitos.
     
-    Seguridad:
-    - `throttle_scope = 'otp_request'`: Previene saturación del servidor SMTP (Brevo)
-      y ataques de tipo Mail-Bombing mediante control de tasa de solicitudes (SEC-04).
+    Mecanismos de protección:
+    - Limitación de tasa (`throttle_scope = 'otp_request'`): Máximo 5 solicitudes por minuto
+      para prevenir saturación del servidor SMTP y abusos de envío reiterado de correos.
+    - Prevención de enumeración de usuarios: Retorna una respuesta neutral idéntica (código HTTP 200 OK)
+      tanto si el ID existe en el sistema como si no, evitando que un atacante determine qué números
+      de credencial corresponden a cuentas activas.
+    
+    Dónde se utiliza:
+    - En el paso 1 del modal de recuperación de PIN en la app móvil (`PinRecoveryModal.tsx`).
+    - En el formulario de solicitud de código en el portal web (`auth_portal.html`).
     """
     permission_classes = [AllowAny]
     throttle_scope = 'otp_request'
@@ -244,7 +275,7 @@ class RequestPinResetView(APIView):
         usuario = serializer.validated_data.get('usuario')
         usuario_id = serializer.validated_data.get('usuario_id')
 
-        # Si el usuario existe, enviar OTP a su casilla corporativa
+        # Si el usuario existe y está activo, generar y despachar el código OTP por correo
         if usuario is not None:
             try:
                 solicitar_codigo_recuperacion(usuario, duracion_minutos=15)
@@ -256,9 +287,7 @@ class RequestPinResetView(APIView):
                     'error_detail': str(e)
                 }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
-        # Mitigación SEC-04: Respuesta unificada neutral
-        # Retorna el mismo status 200 OK tanto si el usuario existe como si no,
-        # impidiendo a un atacante mapear qué números de credencial están activos.
+        # Respuesta neutral para evitar la enumeración de credenciales activas
         correo_display = enmascarar_correo(usuario.correo) if usuario else '******@******'
 
         return Response({
@@ -274,7 +303,11 @@ class VerifyPinResetView(APIView):
     """
     POST /api/v1/auth/verify-pin-reset/
     
-    Comprueba el código OTP de 6 dígitos recibido por correo y actualiza el PIN del usuario.
+    Valida el código OTP de 6 dígitos recibido por correo y actualiza el PIN del usuario.
+    
+    Dónde se utiliza:
+    - En el paso 2 del modal de recuperación de PIN de la aplicación móvil (`PinRecoveryModal.tsx`).
+    - En la confirmación de nueva clave del portal web de autoservicio (`auth_portal.html`).
     """
     permission_classes = [AllowAny]
 
@@ -287,7 +320,7 @@ class VerifyPinResetView(APIView):
         otp_obj = serializer.validated_data['otp_obj']
         nuevo_pin = serializer.validated_data['nuevo_pin']
 
-        # Aplicar el cambio de PIN mediante el servicio de dominio
+        # Consumir el código OTP y aplicar el cambio de contraseña
         aplicar_cambio_pin(usuario, otp_obj, nuevo_pin)
 
         return Response({
@@ -302,8 +335,13 @@ class AuthPortalWebView(View):
     """
     GET /auth/portal/
     
-    Renderiza la interfaz web de autoservicio para recuperación de PIN y cambio de correo en faena.
+    Renderiza la interfaz web de autoservicio para la recuperación de PIN y gestión de correo.
+    
+    Dónde se utiliza:
+    - Accesible desde navegadores web de escritorio o móviles para que los trabajadores
+      puedan recuperar su PIN o actualizar su contacto corporativo.
     """
     def get(self, request):
         return render(request, 'reports/auth_portal.html')
+
 

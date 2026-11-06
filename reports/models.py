@@ -1,13 +1,17 @@
 """
 Modelos de Datos Relacionales del Servidor Central (Report Seeker).
 
-Este módulo define la estructura de entidades para el control y gestión de incidencias
-en faenas mineras:
+Este módulo define la estructura de entidades para el control y gestión de incidencias:
 - `Usuario`: Personal operativo y supervisores con credenciales de 5 dígitos y PIN.
-- `Localizacion`: Catálogo maestro de áreas y túneles en terreno.
+- `Localizacion`: Catálogo maestro de áreas, sectores físicos y frentes de trabajo.
 - `Reporte`: Registro de incidentes reportados (con fotografía, prioridad y estado).
 - `ReporteHistorial`: Bitácora inmutable de auditoría para trazabilidad de modificaciones.
 - `CodigoVerificacion`: Códigos OTP de 6 dígitos para recuperación segura de PIN vía correo.
+
+Dónde se utiliza:
+- En las vistas (`reports/views/`) y serializadores (`reports/serializers/`) para servir las APIs móviles y web.
+- En el panel administrativo de Django (`reports/admin.py`) para supervisión y auditoría en faena.
+- En la base de datos relacional SQLite del backend y reflejado en el SQLite local del dispositivo móvil.
 """
 
 import uuid

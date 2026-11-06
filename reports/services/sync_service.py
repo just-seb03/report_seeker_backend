@@ -6,8 +6,13 @@ móviles de faena y el servidor central:
 1. `procesar_push_sincronizacion`: Recepción atómica e idempotente de lotes de reportes
    y eventos de auditoría (historial). Resuelve referencias lógicas, guarda imágenes
    y previene colisiones.
-2. `obtener_pull_sincronizacion`: Consulta incremental (delta) basada en timestamp
+2. `obtener_conjuntos_pull`: Consulta incremental (delta) basada en timestamp
    `since` para catálogos de localizaciones, usuarios autorizados y reportes recientes.
+
+Dónde se utiliza:
+- En `reports/views/sync_views.py` (`SyncPushView` y `SyncPullView`) para procesar
+  las llamadas de sincronización realizadas por `SyncService.ts` de la aplicación móvil.
+- En las pruebas de sincronización offline: `reports/tests/test_sync.py`.
 """
 
 import logging

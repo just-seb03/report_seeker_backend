@@ -1,9 +1,13 @@
 """
-Controladores del Sistema y Verificación de Estado (Health Check).
+Controladores del Sistema y Monitoreo de Estado (Health Check).
 
-Este módulo provee endpoints para monitoreo operacional y verificación de conectividad
-por parte de clientes móviles y herramientas de infraestructura:
-- `HealthCheckView`: Comprueba conectividad a la base de datos SQLite y estado de seguridad del nodo.
+Este módulo provee endpoints para supervisión operacional y diagnóstico de infraestructura:
+- `HealthCheckView`: Comprueba la conectividad hacia la base de datos y reporta el estado
+  operativo del nodo sin comprometer información sensible.
+
+Dónde se utiliza:
+- En balanceadores de carga, monitores de disponibilidad (uptime monitors) y proxies.
+- En la verificación de red que realiza el cliente móvil antes de iniciar ciclos de sincronización pesados.
 """
 
 from django.db import connection
@@ -19,11 +23,13 @@ class HealthCheckView(APIView):
     GET /api/v1/health/
     
     Verifica la salud operativa del backend:
-    - Estado de la base de datos (consulta ping trivial).
-    - Estado de transporte (HTTP vs HTTPS detectado).
-    - Marca de tiempo del servidor.
+    - Estado de la base de datos (consulta trivial de comprobación de conexión).
+    - Estado de la capa de transporte (detección de HTTPS / SSL).
+    - Marca de tiempo del servidor para sincronización horaria.
     
-    Seguridad: No expone rutas, variables de entorno ni detalles internos del sistema.
+    Dónde se utiliza:
+    - En sondas de salud (health probes) de contenedores, servidores y balanceadores.
+    - En el diagnóstico preventivo de conectividad desde la aplicación móvil.
     """
     permission_classes = [AllowAny]
 
@@ -46,4 +52,5 @@ class HealthCheckView(APIView):
 
         codigo_http = status.HTTP_200_OK if db_ok else status.HTTP_503_SERVICE_UNAVAILABLE
         return Response(datos_estado, status=codigo_http)
+
 
