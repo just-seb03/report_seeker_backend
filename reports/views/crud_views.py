@@ -41,6 +41,7 @@ class ReporteViewSet(viewsets.ModelViewSet):
     permission_classes = [AllowAny]
     pagination_class = StandardResultsPagination
     search_fields = ['titulo', 'descripcion', 'usuario_nombre', 'ubicacion_texto']
+    ordering_fields = ['fecha_captura', 'prioridad', 'estado', 'created_at']
 
 
 class LocalizacionViewSet(viewsets.ModelViewSet):
