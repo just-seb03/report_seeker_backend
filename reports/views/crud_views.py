@@ -43,6 +43,20 @@ class ReporteViewSet(viewsets.ModelViewSet):
     search_fields = ['titulo', 'descripcion', 'usuario_nombre', 'ubicacion_texto']
     ordering_fields = ['fecha_captura', 'prioridad', 'estado', 'created_at']
 
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        filters = {}
+
+        prioridad = self.request.query_params.get('prioridad')
+        if prioridad:
+            filters['prioridad'] = prioridad
+
+        estado = self.request.query_params.get('estado')
+        if estado:
+            filters['estado'] = estado
+
+        return queryset.filter(**filters)
+
 
 class LocalizacionViewSet(viewsets.ModelViewSet):
     """

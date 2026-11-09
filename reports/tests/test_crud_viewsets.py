@@ -66,6 +66,26 @@ class ViewSetCrudTests(TestCase):
         self.assertIn('results', response.data)
         self.assertGreaterEqual(len(response.data['results']), 1)
 
+    def test_reporte_list_filters_by_prioridad_and_estado(self):
+        """Verifica filtrar reportes por prioridad y estado."""
+        Reporte.objects.create(
+            titulo='Reporte no coincidente',
+            descripcion='No debe aparecer en el resultado filtrado',
+            fecha_captura=timezone.now(),
+            usuario=self.usuario,
+            localizacion=self.localizacion,
+            prioridad='Alta',
+            estado='en_revision',
+        )
+
+        response = self.client.get(
+            '/api/v1/reportes/?prioridad=Media&estado=capturado'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(response.data['results'][0]['titulo'], 'Incidencia Inicial')
+
     def test_reporte_list_supports_page_size_with_maximum(self):
         """Verifica page_size configurable con un límite máximo de 100 registros."""
         Reporte.objects.bulk_create([
