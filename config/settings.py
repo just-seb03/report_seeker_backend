@@ -193,7 +193,7 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 # Django REST Framework configuration con Hardening y Rate Limiting
 REST_FRAMEWORK = {
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'DEFAULT_PAGINATION_CLASS': 'reports.pagination.StandardResultsPagination',
     'PAGE_SIZE': 10,
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.TokenAuthentication',

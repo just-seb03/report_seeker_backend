@@ -66,6 +66,32 @@ class ViewSetCrudTests(TestCase):
         self.assertIn('results', response.data)
         self.assertGreaterEqual(len(response.data['results']), 1)
 
+    def test_reporte_list_supports_page_size_with_maximum(self):
+        """Verifica page_size configurable con un límite máximo de 100 registros."""
+        Reporte.objects.bulk_create([
+            Reporte(
+                titulo=f'Reporte de paginación {index}',
+                descripcion='Reporte para probar paginación',
+                fecha_captura=timezone.now(),
+                usuario=self.usuario,
+                localizacion=self.localizacion,
+                prioridad='Media',
+                estado='capturado',
+            )
+            for index in range(101)
+        ])
+
+        response = self.client.get('/api/v1/reportes/?page_size=1')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 102)
+        self.assertEqual(len(response.data['results']), 1)
+
+        response = self.client.get('/api/v1/reportes/?page_size=200')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 100)
+
     def test_reporte_create_post(self):
         """Verifica crear un reporte mediante POST."""
         payload = {
@@ -107,4 +133,3 @@ class ViewSetCrudTests(TestCase):
         response = self.client.delete(f'/api/v1/reportes/{self.reporte.pk}/')
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(Reporte.objects.filter(pk=self.reporte.pk).exists())
-
