@@ -136,6 +136,11 @@ class ReporteSerializer(serializers.ModelSerializer):
     - En `ReporteViewSet` (`/api/v1/reportes/`), utilizado en la interfaz web de DRF
       y por herramientas externas de supervisión.
     """
+    localizacion_nombre = serializers.CharField(
+        source='localizacion.nombre',
+        read_only=True,
+    )
+
     class Meta:
         model = Reporte
         fields = [
@@ -149,6 +154,7 @@ class ReporteSerializer(serializers.ModelSerializer):
             'usuario_nombre',
             'usuario_cargo',
             'localizacion',
+            'localizacion_nombre',
             'ubicacion_texto',
             'prioridad',
             'estado',
@@ -156,5 +162,4 @@ class ReporteSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
         read_only_fields = ['id', 'uuid', 'created_at', 'updated_at']
-
 

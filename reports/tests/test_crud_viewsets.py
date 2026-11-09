@@ -126,12 +126,16 @@ class ViewSetCrudTests(TestCase):
         response = self.client.post('/api/v1/reportes/', payload, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['titulo'], 'Nuevo Reporte DRF')
+        self.assertEqual(response.data['localizacion'], self.localizacion.id)
+        self.assertEqual(response.data['localizacion_nombre'], 'Túnel 4')
 
     def test_reporte_detail_get(self):
         """Verifica obtener detalle de un registro específico (GET /api/v1/reportes/<pk>/)."""
         response = self.client.get(f'/api/v1/reportes/{self.reporte.pk}/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['titulo'], 'Incidencia Inicial')
+        self.assertEqual(response.data['localizacion'], self.localizacion.id)
+        self.assertEqual(response.data['localizacion_nombre'], 'Túnel 4')
 
     def test_reporte_update_put(self):
         """Verifica actualizar un registro existente (PUT /api/v1/reportes/<pk>/)."""
