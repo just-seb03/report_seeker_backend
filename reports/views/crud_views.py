@@ -16,6 +16,7 @@ Dónde se utiliza:
 from rest_framework import viewsets
 from rest_framework.permissions import AllowAny, IsAuthenticatedOrReadOnly
 from reports.models import Reporte, Localizacion
+from reports.permissions import IsAuthorOrReadOnly
 from reports.serializers import ReporteSerializer, LocalizacionSerializer
 
 
@@ -37,7 +38,7 @@ class ReporteViewSet(viewsets.ModelViewSet):
     """
     queryset = Reporte.objects.all().order_by('-fecha_captura')
     serializer_class = ReporteSerializer
-    permission_classes = [IsAuthenticatedOrReadOnly]
+    permission_classes = [IsAuthenticatedOrReadOnly, IsAuthorOrReadOnly]
 
 
 class LocalizacionViewSet(viewsets.ModelViewSet):
