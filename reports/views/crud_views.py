@@ -56,6 +56,6 @@ class LocalizacionViewSet(viewsets.ModelViewSet):
     """
     queryset = Localizacion.objects.all().order_by('id')
     serializer_class = LocalizacionSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticatedOrReadOnly]
 
 
