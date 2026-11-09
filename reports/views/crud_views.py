@@ -40,6 +40,7 @@ class ReporteViewSet(viewsets.ModelViewSet):
     serializer_class = ReporteSerializer
     permission_classes = [AllowAny]
     pagination_class = StandardResultsPagination
+    search_fields = ['titulo', 'descripcion', 'usuario_nombre', 'ubicacion_texto']
 
 
 class LocalizacionViewSet(viewsets.ModelViewSet):
@@ -60,4 +61,3 @@ class LocalizacionViewSet(viewsets.ModelViewSet):
     serializer_class = LocalizacionSerializer
     permission_classes = [AllowAny]
     pagination_class = StandardResultsPagination
-
