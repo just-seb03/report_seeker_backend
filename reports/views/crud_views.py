@@ -15,7 +15,7 @@ Dónde se utiliza:
 
 from rest_framework import viewsets
 from rest_framework.permissions import AllowAny, IsAuthenticatedOrReadOnly
-from reports.models import Reporte, Localizacion
+from reports.models import Reporte, Localizacion, Usuario
 from reports.permissions import IsAuthorOrReadOnly
 from reports.serializers import ReporteSerializer, LocalizacionSerializer
 
@@ -39,6 +39,24 @@ class ReporteViewSet(viewsets.ModelViewSet):
     queryset = Reporte.objects.all().order_by('-fecha_captura')
     serializer_class = ReporteSerializer
     permission_classes = [IsAuthenticatedOrReadOnly, IsAuthorOrReadOnly]
+
+    def perform_create(self, serializer):
+        """
+        Asocia automáticamente el usuario autenticado como autor del reporte
+        al momento de registrarlo desde la API navegable.
+        """
+        usuario_op = None
+        if self.request.user and self.request.user.is_authenticated:
+            usuario_op = Usuario.objects.filter(usuario_id=self.request.user.username).first()
+
+        if usuario_op:
+            serializer.save(
+                usuario=usuario_op,
+                usuario_nombre=usuario_op.nombre,
+                usuario_cargo=usuario_op.cargo
+            )
+        else:
+            serializer.save()
 
 
 class LocalizacionViewSet(viewsets.ModelViewSet):
