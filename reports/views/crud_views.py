@@ -1,22 +1,28 @@
 """
-Controladores CRUD basados en ViewSets para la API navegable de Django REST Framework.
+Controladores CRUD y Vistas Genéricas basadas en ModelViewSet de Django REST Framework.
 
-Este módulo expone los recursos principales del sistema mediante `ModelViewSet`:
-- `ReporteViewSet`: Gestiona las operaciones de listado, creación, detalle, actualización
-  y eliminación de incidencias.
-- `LocalizacionViewSet`: Gestiona el catálogo de sectores físicos y zonas de trabajo.
+Este módulo implementa los controladores REST navegables para la administración y consulta
+de las entidades primarias del sistema (Reportes, Localizaciones y Usuarios).
+
+ModelViewSets provistos:
+- `ReporteViewSet`: Operaciones CRUD completas sobre incidencias mineras.
+  Soporta paginación estándar, búsqueda multi-campo, filtros por estado/prioridad y ordenamiento.
+  Aplica permisos IsAuthenticatedOrReadOnly e IsAuthorOrReadOnly.
+- `LocalizacionViewSet`: Operaciones CRUD sobre áreas físicas y sectores de faena.
+  Aplica paginación estándar, búsqueda, ordenamiento y permiso IsAuthenticatedOrReadOnly.
+- `UsuarioViewSet`: Consulta de sólo lectura (ReadOnlyModelViewSet) para operarios y supervisores,
+  sin exponer credenciales ni PINs.
 
 Dónde se utiliza:
-- En la interfaz web navegable de DRF (`/api/v1/reportes/` y `/api/v1/localizaciones/`).
-- En integraciones con paneles de visualización y herramientas administrativas externas
-  que consumen directamente operaciones REST estándar.
-- Registrado de forma centralizada en el `DefaultRouter` de `reports/urls.py`.
+- Conectados al `DefaultRouter` en `reports/urls.py` para la API REST navegable (`/api/v1/`).
+- Consumidos por la interfaz navegable de DRF y herramientas de supervisión externa.
 """
 
 from rest_framework import viewsets
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticatedOrReadOnly
 from reports.models import Reporte, Localizacion, Usuario
 from reports.pagination import StandardResultsPagination
+from reports.permissions import IsAuthorOrReadOnly
 from reports.serializers import (
     ReporteSerializer,
     LocalizacionSerializer,
@@ -26,23 +32,26 @@ from reports.serializers import (
 
 class ReporteViewSet(viewsets.ModelViewSet):
     """
-    Controlador REST integral para el modelo Reporte.
-    
-    Provee las siguientes acciones automáticas:
-    - `GET /api/v1/reportes/`: Lista todos los reportes ordenados cronológicamente y
-      muestra el formulario de creación en la interfaz web de DRF.
-    - `POST /api/v1/reportes/`: Crea un nuevo reporte validando datos obligatorios.
-    - `GET /api/v1/reportes/<pk>/`: Consulta la información detallada de un reporte específico.
-    - `PUT /api/v1/reportes/<pk>/` / `PATCH /api/v1/reportes/<pk>/`: Actualiza datos de un reporte existente.
-    - `DELETE /api/v1/reportes/<pk>/`: Elimina un reporte del sistema.
-    
+    Controlador RESTful para la entidad central Reporte.
+
+    Provee endpoints para listar, crear, consultar, actualizar y eliminar incidencias
+    registradas en faena minera.
+
+    Características implementadas:
+    - Paginación estándar (10 por página, configurable hasta 100 con ?page_size=).
+    - Búsqueda textual multi-campo en título, descripción, usuario_nombre y ubicación (?search=).
+    - Filtrado exacto insensible a mayúsculas por ?prioridad= y ?estado=.
+    - Ordenamiento por fecha de captura, prioridad, estado y fecha de creación (?ordering=).
+    - Autorización granular: lectura pública, creación autenticada, y modificación/eliminación
+      restringida al autor del reporte o administradores (is_staff).
+
     Dónde se utiliza:
-    - En la interfaz interactiva navegable de DRF.
+    - En la interfaz interactiva navegable de DRF (`/api/v1/reportes/`).
     - Como interfaz de integración para reportes individuales sin pasar por sincronización por lotes.
     """
     queryset = Reporte.objects.select_related('localizacion', 'usuario').all().order_by('-fecha_captura')
     serializer_class = ReporteSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticatedOrReadOnly, IsAuthorOrReadOnly]
     pagination_class = StandardResultsPagination
     search_fields = ['titulo', 'descripcion', 'usuario_nombre', 'ubicacion_texto']
     ordering_fields = ['fecha_captura', 'prioridad', 'estado', 'created_at']
@@ -65,24 +74,45 @@ class ReporteViewSet(viewsets.ModelViewSet):
 
         return queryset.filter(**filters)
 
+    def perform_create(self, serializer):
+        """
+        Asocia automáticamente el usuario autenticado como autor del reporte
+        al momento de registrarlo desde la API navegable.
+        """
+        usuario_op = None
+        if self.request.user and self.request.user.is_authenticated:
+            if str(self.request.user.username).isdigit():
+                usuario_op = Usuario.objects.filter(usuario_id=int(self.request.user.username)).first()
+
+        if usuario_op:
+            serializer.save(
+                usuario=usuario_op,
+                usuario_nombre=usuario_op.nombre,
+                usuario_cargo=usuario_op.cargo
+            )
+        else:
+            serializer.save()
+
 
 class LocalizacionViewSet(viewsets.ModelViewSet):
     """
-    Controlador REST integral para el catálogo maestro de Localizaciones.
-    
-    Provee las siguientes acciones automáticas:
-    - `GET /api/v1/localizaciones/`: Lista todos los sectores registrados y el formulario para añadir nuevos.
-    - `POST /api/v1/localizaciones/`: Registra un nuevo sector o área física de trabajo.
-    - `GET /api/v1/localizaciones/<pk>/`: Consulta el detalle de un sector específico.
-    - `PUT /api/v1/localizaciones/<pk>/`: Modifica el nombre o estado activo de un sector.
-    - `DELETE /api/v1/localizaciones/<pk>/`: Elimina un sector del catálogo.
-    
+    Controlador RESTful para el catálogo maestro de áreas físicas y sectores de faena minera.
+
+    Provee endpoints para listar y administrar sectores como túneles, frentes y plantas.
+
+    Características implementadas:
+    - Paginación estándar (10 por página).
+    - Búsqueda por nombre (?search=).
+    - Ordenamiento por id, nombre y activo (?ordering=).
+    - Permisos: lectura pública, modificación restringida a usuarios autenticados.
+
     Dónde se utiliza:
-    - En la gestión administrativa de sectores mediante la API navegable de DRF.
+    - En la interfaz interactiva navegable de DRF (`/api/v1/localizaciones/`).
+    - Como catálogo maestro de referencia para la creación y clasificación de reportes.
     """
     queryset = Localizacion.objects.all().order_by('id')
     serializer_class = LocalizacionSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticatedOrReadOnly]
     pagination_class = StandardResultsPagination
     search_fields = ['nombre']
     ordering_fields = ['id', 'nombre', 'activo']

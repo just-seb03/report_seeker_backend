@@ -8,11 +8,19 @@ Este archivo valida las 5 operaciones fundamentales de la API navegable de DRF:
 4. Actualización completa o parcial de datos (`PUT /api/v1/reportes/<pk>/`).
 5. Eliminación de un reporte del sistema (`DELETE /api/v1/reportes/<pk>/`).
 
+Además, valida:
+- Paginación estándar (StandardResultsPagination con ?page_size= y límite máximo).
+- Búsqueda textual y ordenamiento multi-campo.
+- Filtrado exacto por prioridad y estado.
+- Endpoint de solo lectura para usuarios sin exposición del PIN.
+- Autorización y permisos (IsAuthenticatedOrReadOnly e IsAuthorOrReadOnly).
+
 Dónde se utiliza:
 - En la suite de pruebas automatizadas del proyecto (`python manage.py test reports.tests.test_crud_viewsets`).
-- Valida el comportamiento de `ReporteViewSet` y `LocalizacionViewSet` expuestos en `reports/urls.py`.
+- Valida el comportamiento de `ReporteViewSet`, `LocalizacionViewSet` y `UsuarioViewSet`.
 """
 
+from django.contrib.auth.models import User
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -24,7 +32,7 @@ from reports.models import Reporte, Localizacion, Usuario
 class ViewSetCrudTests(TestCase):
     """
     Verifica que los ViewSets conectados al DefaultRouter cumplan correctamente
-    con las operaciones estándar de la API REST.
+    con las operaciones estándar de la API REST, incluyendo paginación, filtros y permisos.
     """
     def setUp(self):
         self.client = APIClient()
@@ -50,6 +58,14 @@ class ViewSetCrudTests(TestCase):
             prioridad='Media',
             estado='capturado',
         )
+
+        # Usuario autenticado por defecto asociado al operario autor
+        self.django_user = User.objects.create_user(
+            username=str(self.usuario.usuario_id),
+            email=self.usuario.correo,
+            password='pin'
+        )
+        self.client.force_authenticate(user=self.django_user)
 
     def test_api_root_lists_registered_viewsets(self):
         """Verifica que el router exponga los endpoints principales en la raíz de la API."""
@@ -190,3 +206,69 @@ class ViewSetCrudTests(TestCase):
         response = self.client.delete(f'/api/v1/reportes/{self.reporte.pk}/')
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(Reporte.objects.filter(pk=self.reporte.pk).exists())
+
+    def test_reporte_create_unauthenticated_returns_401(self):
+        """Verifica que un cliente no autenticado no pueda crear reportes (401 Unauthorized)."""
+        self.client.force_authenticate(user=None)
+        payload = {
+            'titulo': 'Reporte anónimo no permitido',
+            'fecha_captura': timezone.now().isoformat(),
+            'prioridad': 'Alta',
+            'estado': 'capturado',
+        }
+        response = self.client.post('/api/v1/reportes/', payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_reporte_update_by_different_user_returns_403(self):
+        """Verifica que otro usuario no autor no pueda modificar el reporte (403 Forbidden)."""
+        otro_user = User.objects.create_user(username='48291', email='otro@minera.cl', password='pin')
+        self.client.force_authenticate(user=otro_user)
+
+        payload = {
+            'titulo': 'Intento de edición no autorizada',
+            'fecha_captura': self.reporte.fecha_captura.isoformat(),
+            'prioridad': 'Baja',
+            'estado': 'resuelto',
+        }
+        response = self.client.put(f'/api/v1/reportes/{self.reporte.pk}/', payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_reporte_update_by_staff_allowed(self):
+        """Verifica que un usuario staff/supervisor sí pueda modificar cualquier reporte."""
+        admin_user = User.objects.create_user(username='admin', email='admin@minera.cl', password='admin', is_staff=True)
+        self.client.force_authenticate(user=admin_user)
+
+        payload = {
+            'titulo': 'Edición por Administrador',
+            'fecha_captura': self.reporte.fecha_captura.isoformat(),
+            'prioridad': 'Alta',
+            'estado': 'resuelto',
+        }
+        response = self.client.put(f'/api/v1/reportes/{self.reporte.pk}/', payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.reporte.refresh_from_db()
+        self.assertEqual(self.reporte.titulo, 'Edición por Administrador')
+
+    def test_reporte_create_by_staff_non_numeric_username_does_not_crash(self):
+        """Verifica que un usuario staff con username no numérico ('admin') pueda crear reportes sin error 500."""
+        admin_user = User.objects.create_user(username='admin_boss', is_staff=True)
+        self.client.force_authenticate(user=admin_user)
+
+        payload = {
+            'titulo': 'Reporte creado por staff',
+            'fecha_captura': timezone.now().isoformat(),
+            'prioridad': 'Alta',
+            'estado': 'capturado',
+            'localizacion': self.localizacion.id,
+            'usuario': self.usuario.usuario_id,
+        }
+        response = self.client.post('/api/v1/reportes/', payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['titulo'], 'Reporte creado por staff')
+
+    def test_localizacion_create_unauthenticated_returns_401(self):
+        """Verifica que crear localizaciones requiera autenticación (401 Unauthorized para anónimos)."""
+        self.client.force_authenticate(user=None)
+        payload = {'id': 99, 'nombre': 'Nuevo Sector', 'activo': True}
+        response = self.client.post('/api/v1/localizaciones/', payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
