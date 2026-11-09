@@ -15,9 +15,13 @@ Dónde se utiliza:
 
 from rest_framework import viewsets
 from rest_framework.permissions import AllowAny
-from reports.models import Reporte, Localizacion
+from reports.models import Reporte, Localizacion, Usuario
 from reports.pagination import StandardResultsPagination
-from reports.serializers import ReporteSerializer, LocalizacionSerializer
+from reports.serializers import (
+    ReporteSerializer,
+    LocalizacionSerializer,
+    UsuarioPublicSerializer,
+)
 
 
 class ReporteViewSet(viewsets.ModelViewSet):
@@ -74,5 +78,14 @@ class LocalizacionViewSet(viewsets.ModelViewSet):
     """
     queryset = Localizacion.objects.all().order_by('id')
     serializer_class = LocalizacionSerializer
+    permission_classes = [AllowAny]
+    pagination_class = StandardResultsPagination
+
+
+class UsuarioViewSet(viewsets.ReadOnlyModelViewSet):
+    """Controlador de solo lectura para consultar usuarios sin exponer el PIN."""
+
+    queryset = Usuario.objects.all().order_by('usuario_id')
+    serializer_class = UsuarioPublicSerializer
     permission_classes = [AllowAny]
     pagination_class = StandardResultsPagination

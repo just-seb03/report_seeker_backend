@@ -57,6 +57,23 @@ class ViewSetCrudTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('reportes', response.data)
         self.assertIn('localizaciones', response.data)
+        self.assertIn('usuarios', response.data)
+
+    def test_usuario_list_is_read_only_and_excludes_pin(self):
+        """Verifica que usuarios sea un endpoint de solo lectura y no exponga el PIN."""
+        response = self.client.get('/api/v1/usuarios/')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(response.data['results'][0]['usuario_id'], self.usuario.usuario_id)
+        self.assertNotIn('pin', response.data['results'][0])
+
+        create_response = self.client.post(
+            '/api/v1/usuarios/',
+            {'usuario_id': 10483, 'nombre': 'Nuevo usuario'},
+            format='json',
+        )
+        self.assertEqual(create_response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
 
     def test_reporte_list_get(self):
         """Verifica listar reportes (GET /api/v1/reportes/)."""

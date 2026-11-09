@@ -27,12 +27,14 @@ from reports.views import (
     HealthCheckView,
     ReporteViewSet,
     LocalizacionViewSet,
+    UsuarioViewSet,
 )
 
 # Router automático para la interfaz navegable de DRF y operaciones CRUD
 router = DefaultRouter()
 router.register('reportes', ReporteViewSet, basename='reporte')
 router.register('localizaciones', LocalizacionViewSet, basename='localizacion')
+router.register('usuarios', UsuarioViewSet, basename='usuario')
 
 urlpatterns = [
     # Interfaz navegable y operaciones REST CRUD (/api/v1/reportes/, /api/v1/localizaciones/)
