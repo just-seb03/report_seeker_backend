@@ -62,7 +62,9 @@ class ViewSetCrudTests(TestCase):
         """Verifica listar reportes (GET /api/v1/reportes/)."""
         response = self.client.get('/api/v1/reportes/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertGreaterEqual(len(response.data), 1)
+        self.assertIn('count', response.data)
+        self.assertIn('results', response.data)
+        self.assertGreaterEqual(len(response.data['results']), 1)
 
     def test_reporte_create_post(self):
         """Verifica crear un reporte mediante POST."""
@@ -105,5 +107,4 @@ class ViewSetCrudTests(TestCase):
         response = self.client.delete(f'/api/v1/reportes/{self.reporte.pk}/')
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(Reporte.objects.filter(pk=self.reporte.pk).exists())
-
 
