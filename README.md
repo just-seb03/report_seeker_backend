@@ -61,6 +61,7 @@ Toda la funcionalidad del backend puede navegarse interactivamente desde la **Br
 | `/api/v1/sync/pull/` | GET | Descarga delta incremental para SQLite móvil | Público / App móvil |
 | `/api/v1/sync/push/` | POST | Subida atómica en lote de reportes offline | Público / App móvil |
 | `/admin/` | GET, POST | Panel de control Django Admin para supervisores | Requiere rol `is_staff` |
+| `/auth/portal/` | GET, POST | Portal Web de Autoservicio para recuperación de PIN con código OTP | Público |
 
 ---
 
