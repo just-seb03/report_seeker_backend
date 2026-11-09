@@ -40,24 +40,28 @@ class ReporteViewSet(viewsets.ModelViewSet):
     - En la interfaz interactiva navegable de DRF.
     - Como interfaz de integración para reportes individuales sin pasar por sincronización por lotes.
     """
-    queryset = Reporte.objects.all().order_by('-fecha_captura')
+    queryset = Reporte.objects.select_related('localizacion', 'usuario').all().order_by('-fecha_captura')
     serializer_class = ReporteSerializer
     permission_classes = [AllowAny]
     pagination_class = StandardResultsPagination
     search_fields = ['titulo', 'descripcion', 'usuario_nombre', 'ubicacion_texto']
     ordering_fields = ['fecha_captura', 'prioridad', 'estado', 'created_at']
+    ordering = ['-fecha_captura']
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        if not getattr(self, 'request', None):
+            return queryset
+
         filters = {}
 
         prioridad = self.request.query_params.get('prioridad')
         if prioridad:
-            filters['prioridad'] = prioridad
+            filters['prioridad__iexact'] = prioridad.strip()
 
         estado = self.request.query_params.get('estado')
         if estado:
-            filters['estado'] = estado
+            filters['estado__iexact'] = estado.strip()
 
         return queryset.filter(**filters)
 
@@ -80,6 +84,9 @@ class LocalizacionViewSet(viewsets.ModelViewSet):
     serializer_class = LocalizacionSerializer
     permission_classes = [AllowAny]
     pagination_class = StandardResultsPagination
+    search_fields = ['nombre']
+    ordering_fields = ['id', 'nombre', 'activo']
+    ordering = ['id']
 
 
 class UsuarioViewSet(viewsets.ReadOnlyModelViewSet):
@@ -89,3 +96,6 @@ class UsuarioViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = UsuarioPublicSerializer
     permission_classes = [AllowAny]
     pagination_class = StandardResultsPagination
+    search_fields = ['nombre', 'correo', 'cargo']
+    ordering_fields = ['usuario_id', 'nombre', 'cargo']
+    ordering = ['usuario_id']
