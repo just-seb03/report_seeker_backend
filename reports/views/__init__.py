@@ -30,6 +30,7 @@ from .system_views import (
 from .crud_views import (
     ReporteViewSet,
     LocalizacionViewSet,
+    UsuarioViewSet,
 )
 from reports.services.otp_service import enmascarar_correo
 
@@ -46,6 +47,6 @@ __all__ = [
     'HealthCheckView',
     'ReporteViewSet',
     'LocalizacionViewSet',
+    'UsuarioViewSet',
     'enmascarar_correo',
 ]
-

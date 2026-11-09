@@ -57,12 +57,77 @@ class ViewSetCrudTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('reportes', response.data)
         self.assertIn('localizaciones', response.data)
+        self.assertIn('usuarios', response.data)
+
+    def test_usuario_list_is_read_only_and_excludes_pin(self):
+        """Verifica que usuarios sea un endpoint de solo lectura y no exponga el PIN."""
+        response = self.client.get('/api/v1/usuarios/')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(response.data['results'][0]['usuario_id'], self.usuario.usuario_id)
+        self.assertNotIn('pin', response.data['results'][0])
+
+        create_response = self.client.post(
+            '/api/v1/usuarios/',
+            {'usuario_id': 10483, 'nombre': 'Nuevo usuario'},
+            format='json',
+        )
+        self.assertEqual(create_response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
 
     def test_reporte_list_get(self):
         """Verifica listar reportes (GET /api/v1/reportes/)."""
         response = self.client.get('/api/v1/reportes/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertGreaterEqual(len(response.data), 1)
+        self.assertIn('count', response.data)
+        self.assertIn('results', response.data)
+        self.assertGreaterEqual(len(response.data['results']), 1)
+
+    def test_reporte_list_filters_by_prioridad_and_estado(self):
+        """Verifica filtrar reportes por prioridad y estado."""
+        Reporte.objects.create(
+            titulo='Reporte no coincidente',
+            descripcion='No debe aparecer en el resultado filtrado',
+            fecha_captura=timezone.now(),
+            usuario=self.usuario,
+            localizacion=self.localizacion,
+            prioridad='Alta',
+            estado='en_revision',
+        )
+
+        response = self.client.get(
+            '/api/v1/reportes/?prioridad=Media&estado=capturado'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(response.data['results'][0]['titulo'], 'Incidencia Inicial')
+
+    def test_reporte_list_supports_page_size_with_maximum(self):
+        """Verifica page_size configurable con un límite máximo de 100 registros."""
+        Reporte.objects.bulk_create([
+            Reporte(
+                titulo=f'Reporte de paginación {index}',
+                descripcion='Reporte para probar paginación',
+                fecha_captura=timezone.now(),
+                usuario=self.usuario,
+                localizacion=self.localizacion,
+                prioridad='Media',
+                estado='capturado',
+            )
+            for index in range(101)
+        ])
+
+        response = self.client.get('/api/v1/reportes/?page_size=1')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 102)
+        self.assertEqual(len(response.data['results']), 1)
+
+        response = self.client.get('/api/v1/reportes/?page_size=200')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['results']), 100)
 
     def test_reporte_create_post(self):
         """Verifica crear un reporte mediante POST."""
@@ -78,12 +143,32 @@ class ViewSetCrudTests(TestCase):
         response = self.client.post('/api/v1/reportes/', payload, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['titulo'], 'Nuevo Reporte DRF')
+        self.assertEqual(response.data['localizacion'], self.localizacion.id)
+        self.assertEqual(response.data['localizacion_nombre'], 'Túnel 4')
+        self.assertEqual(response.data['usuario_nombre'], self.usuario.nombre)
+        self.assertEqual(response.data['ubicacion_texto'], self.localizacion.nombre)
+
+    def test_reporte_create_without_localizacion(self):
+        """Verifica que un reporte sin localización maneje localizacion_nombre como null."""
+        payload = {
+            'titulo': 'Reporte sin sector físico',
+            'fecha_captura': timezone.now().isoformat(),
+            'prioridad': 'Baja',
+            'estado': 'capturado',
+            'localizacion': None,
+        }
+        response = self.client.post('/api/v1/reportes/', payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIsNone(response.data['localizacion'])
+        self.assertIsNone(response.data['localizacion_nombre'])
 
     def test_reporte_detail_get(self):
         """Verifica obtener detalle de un registro específico (GET /api/v1/reportes/<pk>/)."""
         response = self.client.get(f'/api/v1/reportes/{self.reporte.pk}/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['titulo'], 'Incidencia Inicial')
+        self.assertEqual(response.data['localizacion'], self.localizacion.id)
+        self.assertEqual(response.data['localizacion_nombre'], 'Túnel 4')
 
     def test_reporte_update_put(self):
         """Verifica actualizar un registro existente (PUT /api/v1/reportes/<pk>/)."""
@@ -105,5 +190,3 @@ class ViewSetCrudTests(TestCase):
         response = self.client.delete(f'/api/v1/reportes/{self.reporte.pk}/')
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(Reporte.objects.filter(pk=self.reporte.pk).exists())
-
-
