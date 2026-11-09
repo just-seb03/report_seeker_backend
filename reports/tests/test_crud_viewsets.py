@@ -145,6 +145,22 @@ class ViewSetCrudTests(TestCase):
         self.assertEqual(response.data['titulo'], 'Nuevo Reporte DRF')
         self.assertEqual(response.data['localizacion'], self.localizacion.id)
         self.assertEqual(response.data['localizacion_nombre'], 'Túnel 4')
+        self.assertEqual(response.data['usuario_nombre'], self.usuario.nombre)
+        self.assertEqual(response.data['ubicacion_texto'], self.localizacion.nombre)
+
+    def test_reporte_create_without_localizacion(self):
+        """Verifica que un reporte sin localización maneje localizacion_nombre como null."""
+        payload = {
+            'titulo': 'Reporte sin sector físico',
+            'fecha_captura': timezone.now().isoformat(),
+            'prioridad': 'Baja',
+            'estado': 'capturado',
+            'localizacion': None,
+        }
+        response = self.client.post('/api/v1/reportes/', payload, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIsNone(response.data['localizacion'])
+        self.assertIsNone(response.data['localizacion_nombre'])
 
     def test_reporte_detail_get(self):
         """Verifica obtener detalle de un registro específico (GET /api/v1/reportes/<pk>/)."""

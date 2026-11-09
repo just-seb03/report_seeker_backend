@@ -139,6 +139,7 @@ class ReporteSerializer(serializers.ModelSerializer):
     localizacion_nombre = serializers.CharField(
         source='localizacion.nombre',
         read_only=True,
+        default=None,
     )
 
     class Meta:
@@ -162,4 +163,36 @@ class ReporteSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
         read_only_fields = ['id', 'uuid', 'created_at', 'updated_at']
+
+    def create(self, validated_data):
+        """Auto-completa campos desnormalizados a partir de las relaciones asignadas."""
+        usuario = validated_data.get('usuario')
+        if usuario:
+            if not validated_data.get('usuario_nombre'):
+                validated_data['usuario_nombre'] = usuario.nombre
+            if not validated_data.get('usuario_cargo'):
+                validated_data['usuario_cargo'] = usuario.cargo
+
+        localizacion = validated_data.get('localizacion')
+        if localizacion and not validated_data.get('ubicacion_texto'):
+            validated_data['ubicacion_texto'] = localizacion.nombre
+
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        """Mantiene sincronizados los campos desnormalizados ante actualizaciones de relación."""
+        if 'usuario' in validated_data:
+            usuario = validated_data.get('usuario')
+            if usuario:
+                if 'usuario_nombre' not in validated_data:
+                    validated_data['usuario_nombre'] = usuario.nombre
+                if 'usuario_cargo' not in validated_data:
+                    validated_data['usuario_cargo'] = usuario.cargo
+
+        if 'localizacion' in validated_data:
+            localizacion = validated_data.get('localizacion')
+            if localizacion and 'ubicacion_texto' not in validated_data:
+                validated_data['ubicacion_texto'] = localizacion.nombre
+
+        return super().update(instance, validated_data)
 
