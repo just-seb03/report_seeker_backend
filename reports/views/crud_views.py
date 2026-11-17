@@ -20,11 +20,12 @@ Dónde se utiliza:
 
 from rest_framework import viewsets
 from rest_framework.permissions import AllowAny, IsAuthenticatedOrReadOnly
-from reports.models import Reporte, Localizacion, Usuario
+from reports.models import Reporte, Localizacion, Usuario, ReporteHistorial
 from reports.pagination import StandardResultsPagination
 from reports.permissions import IsAuthorOrReadOnly
 from reports.serializers import (
     ReporteSerializer,
+    ReporteHistorialSerializer,
     LocalizacionSerializer,
     UsuarioPublicSerializer,
 )
@@ -129,3 +130,35 @@ class UsuarioViewSet(viewsets.ReadOnlyModelViewSet):
     search_fields = ['nombre', 'correo', 'cargo']
     ordering_fields = ['usuario_id', 'nombre', 'cargo']
     ordering = ['usuario_id']
+
+
+class ReporteHistorialViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Controlador de solo lectura para la bitácora inmutable de auditoría (ReporteHistorial).
+
+    Expone el historial completo de cambios de estado y modificaciones sobre los reportes
+    para supervisión y trazabilidad desde la API navegable de DRF.
+
+    Características implementadas:
+    - Solo lectura (GET list y GET detail): la bitácora no puede crearse ni modificarse
+      desde la API REST para preservar su inmutabilidad.
+    - Paginación estándar (10 por página).
+    - Búsqueda textual por nombre del operador y campo modificado (?search=).
+    - Filtrado y ordenamiento por fecha de cambio (?ordering=).
+
+    Dónde se utiliza:
+    - En la interfaz interactiva navegable de DRF (`/api/v1/historial/`).
+    - Como herramienta de auditoría para supervisores en faena.
+    """
+    queryset = (
+        ReporteHistorial.objects
+        .select_related('reporte', 'usuario')
+        .all()
+        .order_by('-fecha_cambio')
+    )
+    serializer_class = ReporteHistorialSerializer
+    permission_classes = [AllowAny]
+    pagination_class = StandardResultsPagination
+    search_fields = ['usuario_nombre', 'campo_modificado', 'valor_nuevo']
+    ordering_fields = ['fecha_cambio', 'created_at', 'campo_modificado']
+    ordering = ['-fecha_cambio']

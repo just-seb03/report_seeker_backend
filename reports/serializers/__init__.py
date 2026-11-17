@@ -16,6 +16,7 @@ from .common import Base64ImageField
 from .usuarios import UsuarioSerializer, UsuarioPublicSerializer
 from .localizaciones import LocalizacionSerializer
 from .reportes import (
+    ReporteHistorialSerializer,
     ReporteHistorialItemSerializer,
     ReportePushItemSerializer,
     SyncPushPayloadSerializer,
@@ -35,6 +36,7 @@ __all__ = [
     'UsuarioSerializer',
     'UsuarioPublicSerializer',
     'LocalizacionSerializer',
+    'ReporteHistorialSerializer',
     'ReporteHistorialItemSerializer',
     'ReportePushItemSerializer',
     'SyncPushPayloadSerializer',
