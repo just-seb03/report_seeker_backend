@@ -28,6 +28,7 @@ from reports.views import (
     ReporteViewSet,
     LocalizacionViewSet,
     UsuarioViewSet,
+    ReporteHistorialViewSet,
 )
 
 # Router automático para la interfaz navegable de DRF y operaciones CRUD
@@ -35,6 +36,7 @@ router = DefaultRouter()
 router.register('reportes', ReporteViewSet, basename='reporte')
 router.register('localizaciones', LocalizacionViewSet, basename='localizacion')
 router.register('usuarios', UsuarioViewSet, basename='usuario')
+router.register('historial', ReporteHistorialViewSet, basename='historial')
 
 urlpatterns = [
     # Interfaz navegable y operaciones REST CRUD (/api/v1/reportes/, /api/v1/localizaciones/)

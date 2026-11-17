@@ -17,8 +17,38 @@ Dónde se utiliza:
 
 from typing import Optional
 from rest_framework import serializers
-from reports.models import Reporte
+from reports.models import Reporte, ReporteHistorial
 from .common import Base64ImageField
+
+
+class ReporteHistorialSerializer(serializers.ModelSerializer):
+    """
+    Serializador de solo lectura para la bitácora inmutable de auditoría (ReporteHistorial).
+
+    Expone todos los campos del historial de cambios de un reporte para supervisión
+    y trazabilidad desde la API navegable.
+
+    Dónde se utiliza:
+    - En `ReporteHistorialViewSet` (`/api/v1/historial/`) para la interfaz navegable de DRF.
+    """
+    reporte_uuid = serializers.UUIDField(source='reporte.uuid', read_only=True)
+
+    class Meta:
+        model = ReporteHistorial
+        fields = [
+            'id',
+            'uuid',
+            'reporte',
+            'reporte_uuid',
+            'usuario',
+            'usuario_nombre',
+            'campo_modificado',
+            'valor_anterior',
+            'valor_nuevo',
+            'fecha_cambio',
+            'created_at',
+        ]
+        read_only_fields = fields
 
 
 class ReporteHistorialItemSerializer(serializers.Serializer):

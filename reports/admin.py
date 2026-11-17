@@ -95,7 +95,8 @@ class ReporteAdmin(admin.ModelAdmin):
         'created_at',
         'updated_at',
     ]
-    date_hierarchy = 'fecha_captura'
+    # Se desactiva date_hierarchy para evitar dependencias de las tablas tz de MySQL en Windows/CI
+    # date_hierarchy = 'fecha_captura'
     list_per_page = 25
     actions = ['marcar_en_revision', 'marcar_resuelto']
 
